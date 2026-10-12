@@ -705,6 +705,10 @@ function formatWakeInstant(at: Date): string {
 
 export interface StartRunInput {
   task: string;
+  /** Stable display title supplied by an integration (for example, a GitHub Project card).
+   *  Automation-provided titles keep their source title instead of being replaced by the
+   *  model-generated task summary. */
+  runTitle?: string;
   /** The cockpit device that started this task (telemetry only, `x-cezar-sid`). */
   deviceSid?: string;
   model?: string;
@@ -1419,7 +1423,8 @@ export class RunManager {
       ...(input.forkRef && input.worktree === false ? { worktree: undefined } : {}),
     };
     const run = this.store.createRun({
-      title: makeRunTitle(input.task, workflow) + (group ? ` (${group.variant})` : ''),
+      title: (input.runTitle ?? makeRunTitle(input.task, workflow)) + (group ? ` (${group.variant})` : ''),
+      ...(input.runTitle ? { titleOrigin: 'automation' as const } : {}),
       workflow: workflow.name,
       task: input.task,
       model: effectiveInput.model,
@@ -3420,9 +3425,8 @@ export class RunManager {
     const workflow = this.pendingJobs.get(runId)?.workflow;
     const skillHint = workflow?.steps.find((s) => stepKind(s) === 'agent' && s.skill)?.skill?.trim();
     const refs = refineTaskRefs(extractTaskRefs(task), skillHint);
-    // Hand-edited titles always win (#389): `user` beats the heuristic, and a
-    // `marker` title the agent declared beats it too.
-    const keepTitle = run.titleOrigin === 'user' || run.titleOrigin === 'marker';
+    // Hand-edited and integration-provided titles always win over the heuristic.
+    const keepTitle = run.titleOrigin === 'user' || run.titleOrigin === 'marker' || run.titleOrigin === 'automation';
     this.store.updateRun(runId, {
       task,
       ...(keepTitle || !workflow ? {} : { title: makeRunTitle(task, workflow) }),
@@ -6295,8 +6299,8 @@ export class RunManager {
   /**
    * The namer's apply path (task auto-naming spec). Fire-and-forget: called
    * without await from `startRun` (creation) and `recordTurnEnd` (live
-   * refresh). A user-owned title (`titleOrigin: 'user'`) is never overwritten;
-   * namer-owned titles may be replaced by fresher namer results.
+   * refresh). User-owned, marker-owned, and integration-provided titles are never
+   * overwritten; namer-owned titles may be replaced by fresher namer results.
    */
   private async autoNameRun(
     runId: string,
@@ -6321,7 +6325,7 @@ export class RunManager {
       // Marker-owned state outranks the namer (spec 2026-07-18-task-ref-markers):
       // a declared title blocks the whole apply (this call raced the marker),
       // and a declared pr/issue kind blocks that kind field-by-field.
-      if (!run || run.titleOrigin === 'user' || run.titleOrigin === 'marker') return;
+      if (!run || run.titleOrigin === 'user' || run.titleOrigin === 'marker' || run.titleOrigin === 'automation') return;
       this.store.updateRun(runId, {
         titleSummary: result.titleSummary,
         titleOrigin: 'auto',
@@ -6382,7 +6386,7 @@ export class RunManager {
     if (markers.pr !== undefined || markers.issue !== undefined) {
       this.store.applyMarkerRefs(runId, { pr: markers.pr, issue: markers.issue });
     }
-    if (markers.title && run.titleOrigin !== 'user') {
+    if (markers.title && run.titleOrigin !== 'user' && run.titleOrigin !== 'automation') {
       const current = this.store.getRun(runId);
       const refNumber = current?.prNumber ?? current?.issueNumber;
       const validated = postValidateTitle(markers.title, refNumber);
@@ -6407,7 +6411,7 @@ export class RunManager {
     const config = await loadConfig(this.repoRoot);
     if (!liveTitleUpdatesEnabled(config)) return;
     const run = this.store.getRun(runId);
-    if (!run || run.titleOrigin === 'user' || run.titleOrigin === 'marker') return;
+    if (!run || run.titleOrigin === 'user' || run.titleOrigin === 'marker' || run.titleOrigin === 'automation') return;
     const statText = run.diffStat ? `${run.diffStat.files} files, +${run.diffStat.adds} -${run.diffStat.dels}` : undefined;
     const key = `${turnText.slice(0, 200)}|${statText ?? ''}`;
     if (this.lastNamerKey.get(runId) === key) return;

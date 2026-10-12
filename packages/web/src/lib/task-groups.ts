@@ -109,7 +109,7 @@ export function bucketOf(run: RunRecord, view: ListView): BucketLabel {
  * `titleSummary ?? title`, per the server's contract (`api/types.ts`), except (#623) for malformed
  * auto/legacy summaries whose sentence punctuation was persisted without following whitespace.
  * Those fall back to the honest raw title at display time; persisted state is never rewritten.
- * User and marker titles remain byte-for-byte authoritative.
+ * User, marker and integration titles remain byte-for-byte authoritative.
  *
  * `??`, not `||`: the server never stores an empty summary (trimmed, 1–300 chars), so only
  * absence falls back — a falsy-but-present value would be a server bug worth seeing.
@@ -124,7 +124,7 @@ export type RunTitleInput = Pick<RunRecord, 'title' | 'titleSummary' | 'titleOri
 export function runTitle(run: RunTitleInput): string {
   const summary = run.titleSummary
   if (summary === undefined) return run.title
-  const protectedTitle = run.titleOrigin === 'user' || run.titleOrigin === 'marker'
+  const protectedTitle = run.titleOrigin === 'user' || run.titleOrigin === 'marker' || run.titleOrigin === 'automation'
   return !protectedTitle && /[.!?][A-Z]/.test(summary) ? run.title : summary
 }
 

@@ -43,6 +43,25 @@ describe('automation task templates', () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
+  it('uses the GitHub Project issue title as a stable GHP task title', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'cezar-project-title-'));
+    try {
+      const store = RunStore.open(join(root, '.ai/cezar'));
+      const manager = {
+        startRun: (workflow: { name: string; steps: Array<{ id: string; name?: string; command?: string }> }, input: { task: string; runTitle?: string }) =>
+          store.createRun({ title: input.runTitle ?? 'automation', workflow: workflow.name, task: input.task, steps: workflow.steps.map((step) => ({ id: step.id, name: step.name ?? step.id, kind: step.command ? 'check' as const : 'agent' as const })) }),
+      } as unknown as RunManager;
+      const projectCandidate = { ...candidate, event: 'project.item.status_changed' as const, title: '  Missing features\nfor launch  ' };
+      const launched = await launchAutomationRun({
+        root, manager, store,
+        definition: { ...definition, events: ['project.item.status_changed'], task: { ...definition.task, workflow: 'quick-task' } },
+        candidate: projectCandidate,
+        receiptId: 'project-receipt',
+      });
+      expect(store.getRun(launched.runId)?.title).toBe('GHP: Missing features for launch');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it('carries the automation\'s agent account onto the run it launches', async () => {
     const root = await mkdtemp(join(tmpdir(), 'cezar-template-account-'));
     try {

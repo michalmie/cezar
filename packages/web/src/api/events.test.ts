@@ -167,6 +167,7 @@ describe('mergeRun', () => {
 
   it.each([
     ['user', { title: 'My task', titleSummary: 'My task', titleOrigin: 'user' as const }],
+    ['automation', { title: 'GHP: GitHub issue', titleOrigin: 'automation' as const }],
     ['marker', { title: 'PR #12', titleSummary: 'PR #12', titleOrigin: 'marker' as const }],
   ])('keeps a %s-owned title when a stale auto frame arrives', (_owner, owned) => {
     const previous = run('r1', owned)

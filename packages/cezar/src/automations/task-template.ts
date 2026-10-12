@@ -168,6 +168,10 @@ export async function launchAutomationRun(options: {
   const { definition, candidate } = options;
   const workflow = await resolveWorkflow(options.root, definition);
   const input = startInput(definition, renderAutomationTask(definition, candidate), options.dispatchEnabled ?? false);
+  if (candidate.event === 'project.item.status_changed') {
+    const issueTitle = candidate.title.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
+    input.runTitle = `GHP: ${issueTitle || `#${candidate.number}`}`.slice(0, 500);
+  }
   // `checkout: 'pr-head'` (spec 2026-10-06-agentic-e2e-checks Phase 3): resolve the PR's head
   // BEFORE any run exists. A closed PR, an unadmitted fork or an unreachable head ends here, as
   // a receipt — never as a run that tests the wrong tree.

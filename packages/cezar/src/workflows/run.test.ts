@@ -134,6 +134,25 @@ describe('RunManager directional usage accounting', () => {
     return { run, state, sink };
   }
 
+  it('keeps an integration-provided display title stable through queued task edits', () => {
+    const workflow: WorkflowDef = { name: 'quick-task', source: 'built-in', steps: [] };
+    const record = manager.startRun(workflow, {
+      task: 'work on the issue',
+      runTitle: 'GHP: Missing features for launch',
+      worktree: false,
+    });
+
+    expect(store.getRun(record.id)).toMatchObject({
+      title: 'GHP: Missing features for launch',
+      titleOrigin: 'automation',
+    });
+    expect(manager.editTask(record.id, 'updated issue prompt')).toBe(true);
+    expect(store.getRun(record.id)).toMatchObject({
+      title: 'GHP: Missing features for launch',
+      task: 'updated issue prompt',
+    });
+  });
+
   it('deduplicates starts and completions while summing multiple turns in one invocation', () => {
     const { run, state, sink } = fixture();
     internal.beginUsageInvocation(run.id, state, 'work');

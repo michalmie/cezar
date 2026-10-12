@@ -297,9 +297,9 @@ export const runRecordSchema = z.object({
   issueNumber: z.number().optional(),
   /** Server-side provenance: referenced-issue discovery currently owns `issueNumber`. */
   referencedIssueNumberSeeded: z.boolean().optional(),
-  /** 'user' = renamed via PATCH, never auto-overwritten; 'marker' = agent-declared via
-   *  CEZ:TITLE (spec 2026-07-18-task-ref-markers); 'auto' = namer-owned. */
-  titleOrigin: z.enum(['user', 'auto', 'marker']).optional(),
+  /** 'user' = renamed via PATCH; 'automation' = stable integration title; 'marker' =
+   *  agent-declared via CEZ:TITLE (spec 2026-07-18-task-ref-markers); 'auto' = namer-owned. */
+  titleOrigin: z.enum(['user', 'auto', 'marker', 'automation']).optional(),
   /** References the agent declared via CEZ:PR/CEZ:ISSUE markers — authoritative over the namer
    *  for the matching kind. */
   markerRefs: z.object({ pr: z.number().optional(), issue: z.number().optional() }).optional(),
@@ -412,7 +412,7 @@ export const runIndexEntrySchema = z.object({
   id: z.string(),
   title: z.string(),
   titleSummary: z.string().optional(),
-  titleOrigin: z.enum(['user', 'auto', 'marker']).optional(),
+  titleOrigin: z.enum(['user', 'auto', 'marker', 'automation']).optional(),
   status: runStatusSchema,
   activity: runActivitySchema.optional(),
   createdAt: z.string(),

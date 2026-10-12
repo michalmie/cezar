@@ -344,12 +344,12 @@ export const runRecordSchema = z.object({
    *  Persisted so ambiguity can revoke only the janitor's own value, including
    *  after a restart. Any prompt, namer, or marker write clears this flag. */
   referencedIssueNumberSeeded: z.boolean().optional(),
-  /** Who owns the display title: `user` (PATCH rename — never auto-overwritten),
-   *  `marker` (agent-declared via `CEZ:TITLE`, spec 2026-07-18-task-ref-markers —
-   *  beats the namer, silences live refresh) or `auto` (namer-owned — a later
-   *  namer result may replace it). Missing on old runs = legacy behavior (auto
-   *  fills only an unset titleSummary). Precedence: user > marker > auto. */
-  titleOrigin: z.enum(['user', 'auto', 'marker']).optional(),
+  /** Who owns the display title: `user` (PATCH rename), `automation` (stable title
+   *  supplied by an integration), `marker` (agent-declared via `CEZ:TITLE`) or `auto`
+   *  (namer-owned — a later namer result may replace it). The first three are not
+   *  auto-overwritten. Missing on old runs = legacy behavior (auto fills only an unset
+   *  titleSummary). Precedence: user > automation > marker > auto. */
+  titleOrigin: z.enum(['user', 'auto', 'marker', 'automation']).optional(),
   /** References the agent itself declared via `CEZ:PR=` / `CEZ:ISSUE=` markers
    *  (spec 2026-07-18-task-ref-markers). Presence of a kind makes it
    *  authoritative: the namer may no longer write that kind, and a declared PR
@@ -1031,6 +1031,7 @@ export class RunStore extends EventEmitter {
 
   createRun(input: {
     title: string;
+    titleOrigin?: RunRecord['titleOrigin'];
     workflow: string;
     task: string;
     model?: string;
@@ -1053,6 +1054,7 @@ export class RunStore extends EventEmitter {
       // when a queued run is revived after a restart (#367), so redacting it
       // would corrupt the revived run.
       title: this.redactText(input.title),
+      titleOrigin: input.titleOrigin,
       workflow: input.workflow,
       task: input.task,
       model: input.model,
