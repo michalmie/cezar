@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { z } from 'zod';
+import { pollGithubProject } from './github-project-poller.ts';
+import type { AutomationRuntimeState } from './types.ts';
 import type { GithubAutomationDefinition, AutomationEvent } from './types.ts';
 
 const execFileAsync = promisify(execFile);
@@ -71,10 +73,12 @@ export interface GithubCandidate {
   labels: string[];
   changedLabel?: string;
   reviewer?: string;
+  projectItemId?: string;
 }
 
 export interface GithubPollResult {
   candidates: GithubCandidate[];
+  projectPoll?: AutomationRuntimeState['projectPoll'];
   truncated: boolean;
   pages: number;
   cursor?: { timestamp: string; tieBreaker: string };
@@ -86,6 +90,7 @@ export interface GithubPollerOptions {
 
 export interface GithubPollOptions {
   since?: string;
+  projectPoll?: AutomationRuntimeState['projectPoll'];
   /**
    * Widen this ONE poll's record budget past the definition's own `filters.maxRecords`, clamped
    * to the search API's 100-record ceiling. The scheduler raises it to climb out of a saturated
@@ -113,6 +118,7 @@ export class GithubPoller {
     definition: GithubAutomationDefinition,
     options: GithubPollOptions = {},
   ): Promise<GithubPollResult> {
+    if (definition.projectTrigger) return pollGithubProject(this.run, owner, repo, definition, options.projectPoll);
     const openedEvents = definition.events.filter(
       (event) => event === 'pull_request.opened' || event === 'issue.opened',
     );

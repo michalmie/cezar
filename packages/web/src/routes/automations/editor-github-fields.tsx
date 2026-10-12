@@ -1,7 +1,7 @@
 import { ChevronDownIcon } from 'lucide-react'
 import { useState } from 'react'
 
-import type { AutomationEvent } from '@open-mercato/cezar-api-client'
+import type { AutomationEvent, AutomationDefinition } from '@open-mercato/cezar-api-client'
 import { Chip } from '@/components/chip'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
@@ -18,14 +18,16 @@ import { GITHUB_EVENTS, POLL_MINUTES, clamp, needsChangedLabels, type DraftFilte
  */
 export function EditorGithubFields({
   events,
+  projectTrigger,
   intervalSeconds,
   filters,
   onChange,
 }: {
   events: readonly AutomationEvent[]
+  projectTrigger?: AutomationDefinition['projectTrigger']
   intervalSeconds: number
   filters: DraftFilters
-  onChange: (patch: { events?: AutomationEvent[]; intervalSeconds?: number; filters?: DraftFilters }) => void
+  onChange: (patch: { projectTrigger?: AutomationDefinition['projectTrigger']; events?: AutomationEvent[]; intervalSeconds?: number; filters?: DraftFilters }) => void
 }) {
   const hasList = (['authors', 'assignees', 'anyLabels', 'allLabels', 'excludeLabels', 'changedLabels', 'reviewers'] as const)
     .some((key) => filters[key].trim().length > 0)
@@ -33,9 +35,15 @@ export function EditorGithubFields({
   const setFilter = <K extends keyof DraftFilters>(key: K, value: DraftFilters[K]) =>
     onChange({ filters: { ...filters, [key]: value } })
   const toggleEvent = (event: AutomationEvent) => {
-    const next = events.includes(event) ? events.filter((item) => item !== event) : [...events, event]
+    if (event === 'project.item.status_changed') {
+      onChange({ events: [event], projectTrigger: projectTrigger ?? { url: '', targetStatus: 'Ready' } });
+      return;
+    }
+    const regular = events.filter(item => item !== 'project.item.status_changed');
+    const next: AutomationEvent[] = regular.includes(event) ? regular.filter((item) => item !== event) : [...regular, event]
     onChange({ events: GITHUB_EVENTS.filter((item) => next.includes(item)) })
   }
+  const projectEvent = events.includes('project.item.status_changed')
   const changedRequired = needsChangedLabels(events)
   const changedMissing = changedRequired && filters.changedLabels.trim().length === 0
 
@@ -54,6 +62,21 @@ export function EditorGithubFields({
           </Chip>
         ))}
       </div>
+      {projectEvent ? (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="project-trigger-url">GitHub Project URL</Label>
+            <Input id="project-trigger-url" value={projectTrigger?.url ?? ''} placeholder="https://github.com/users/your-name/projects/1"
+              onChange={event => onChange({ projectTrigger: { targetStatus: projectTrigger?.targetStatus ?? 'Ready', url: event.target.value } })} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="project-trigger-status">Target status (exact name)</Label>
+            <Input id="project-trigger-status" value={projectTrigger?.targetStatus ?? 'Ready'}
+              onChange={event => onChange({ projectTrigger: { url: projectTrigger?.url ?? '', targetStatus: event.target.value } })} />
+          </div>
+          <p className="text-xs text-muted-foreground">Personal and organization boards are supported. Only open issues in this repository qualify. Monitoring starts from the first complete board check; existing Ready cards are skipped. Changes entirely between checks may be missed. Tasks launch one at a time.</p>
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
         poll every
         <Select value={String(Math.round(intervalSeconds / 60))} onValueChange={(value) => onChange({ intervalSeconds: Number(value) * 60 })}>
@@ -66,7 +89,7 @@ export function EditorGithubFields({
             ))}
           </SelectContent>
         </Select>
-        <span>· last {filters.lookbackDays} days · maximum {filters.maxRecords} records</span>
+        <span>{projectEvent ? '· board status changes' : `· last ${filters.lookbackDays} days · maximum ${filters.maxRecords} records`}</span>
       </div>
       <Collapsible open={open} onOpenChange={setOpen}>
         <CollapsibleTrigger asChild>

@@ -119,7 +119,8 @@ export function AutomationEditor({ data, automation, actions, onBack, onSaved, o
   const sourcesReady = skills.data !== undefined && workflows.data !== undefined && !uiState.isPending
   const baseBranch = repo.data?.baseBranch ?? repo.data?.info?.branch ?? undefined
   const cli = useMemo(() => cliDefinitionOf(draft), [draft])
-  const canSave = draft.name.trim().length > 0 && draft.prompt.trim().length > 0 && !saving && (draft.kind !== 'tracker' || trackerValid)
+  const projectValid = !draft.events.includes('project.item.status_changed') || (!!draft.projectTrigger?.url.trim() && !!draft.projectTrigger.targetStatus.trim())
+  const canSave = (draft.kind !== 'github' || projectValid) && draft.name.trim().length > 0 && draft.prompt.trim().length > 0 && !saving && (draft.kind !== 'tracker' || trackerValid)
 
   const insertPrompt = (snippet: string) => {
     const box = promptRef.current
@@ -233,6 +234,7 @@ export function AutomationEditor({ data, automation, actions, onBack, onSaved, o
               ) : (
                 <EditorGithubFields
                   events={draft.events}
+                  projectTrigger={draft.projectTrigger}
                   intervalSeconds={draft.intervalSeconds}
                   filters={draft.filters}
                   onChange={(next) => patch(next)}

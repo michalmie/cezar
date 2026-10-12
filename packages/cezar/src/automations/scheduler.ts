@@ -41,6 +41,7 @@ export interface ProjectAutomationHandle {
    *  removed or reconnected between ticks) rather than being captured once at handle build time. */
   tracker?: { getDriver: () => Promise<TrackerDriver | TrackerFailure>; poller: TrackerPoller };
   launch?: AutomationLauncher;
+  canLaunchProject?: (automationId: string) => Promise<boolean>;
   launchSchedule?: ScheduleLauncher;
   launchTracker?: TrackerAutomationLauncher;
   onChange?: (automationId: string, revision: number) => void;
@@ -82,6 +83,31 @@ export class ProjectAutomationScheduler {
     let exhausted = false;
     let stillPinned = false;
     let polledState: AutomationRuntimeState = {};
+    if (definition.projectTrigger) {
+      return runEventPollCycle<GithubCandidate, GithubPollResult>({
+        store, definition, mode, scheduled, onChange: this.handle.onChange,
+        poll: async state => {
+          const result = await githubRequests.run(() => github.poller.poll(github.owner, github.repo, definition, { projectPoll: state.projectPoll }));
+          const receipts = store.latestReceipts();
+          result.projectPoll!.pending = result.projectPoll!.pending.filter(candidate => !receipts.has(`${definition.id}:${candidate.eventId}`));
+          const available = mode === 'preview' || !this.handle.canLaunchProject || await this.handle.canLaunchProject(definition.id);
+          result.candidates = available ? result.projectPoll!.pending.slice(0, mode === 'preview' ? definition.filters.maxRecords : 1) : [];
+          result.truncated = result.projectPoll!.pending.length > result.candidates.length;
+          return result;
+        },
+        checkpoint: (result, current) => ({ ...current, revision: definition.revision, projectPoll: result.projectPoll }),
+        launch: candidate => this.launch(definition, candidate),
+        persist: (result, current) => {
+          const receipts = store.latestReceipts();
+          return { ...current, revision: definition.revision,
+            projectPoll: { ...result.projectPoll!, pending: result.projectPoll!.pending.filter(candidate => !receipts.has(`${definition.id}:${candidate.eventId}`)) },
+            lastSuccessAt: new Date().toISOString(), nextCheckAt: new Date(Date.now() + definition.intervalSeconds * 1000).toISOString(),
+            consecutiveFailures: 0, backoffUntil: undefined,
+          };
+        },
+        reason: result => result.projectPoll?.pending.length ? 'Project checked; Ready transitions are queued and launches are serialized.' : 'Project checked; no new matching status transitions.',
+      });
+    }
     return runEventPollCycle({
       store, definition, mode, scheduled, onChange: this.handle.onChange,
       poll: async state => {

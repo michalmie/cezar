@@ -314,6 +314,7 @@ export function rebaselineIdleAutomations(
       revision: definition.revision,
       baselineAt,
       cursor: { timestamp: baselineAt },
+      projectPoll: undefined,
       frozenHighWatermark: undefined,
       backlogAfter: undefined,
       pinnedCursor: undefined,

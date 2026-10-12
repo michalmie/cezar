@@ -1,3 +1,4 @@
+import { projectTriggerSchema } from '@open-mercato/cezar-contract';
 import {
   trackerWatchInputSchema, trackerWatchParamsSchema, trackerWatchQuerySchema,
   trackerCandidatesQuerySchema, trackerListQuerySchema, trackerSearchQuerySchema, trackerItemQuerySchema, trackerReadScope,
@@ -409,10 +410,11 @@ const automationEditableSchema = z
     enabled: z.boolean().optional(),
     /** Omitted on create = `github`; omitted on update = the stored kind (spec 2026-09-14). */
     kind: z.enum(['github', 'schedule', 'tracker']).optional(),
-    events: z.array(automationEventSchema).min(1).max(7).optional(),
+    events: z.array(automationEventSchema).min(1).max(8).optional(),
     intervalSeconds: z.number().int().min(60).max(86_400).optional(),
     filters: automationFiltersSchema.optional(),
     trackerTrigger: trackerTriggerSchema.optional(),
+    projectTrigger: projectTriggerSchema.optional(),
     schedule: automationScheduleSchema.optional(),
     task: automationTaskSchema,
   })
@@ -425,6 +427,7 @@ type AutomationEditableBody = z.infer<typeof automationEditableSchema>;
  * schedule and carries no GitHub filter.
  */
 function automationKindIssue(body: AutomationEditableBody, kind: 'github' | 'schedule' | 'tracker'): string | null {
+  if (kind !== 'github' && body.projectTrigger) return 'Project settings require a GitHub automation';
   // Tracker automations have no create/edit route yet (2026-09-19): hand-authored into
   // `automations.json` only. Refuse explicitly rather than misapplying the GitHub filter rules
   // below to one that reaches this far (e.g. a PUT that omits `kind` on an existing tracker row).
@@ -434,6 +437,9 @@ function automationKindIssue(body: AutomationEditableBody, kind: 'github' | 'sch
     if (body.events || body.filters || body.intervalSeconds !== undefined) return 'a scheduled automation has no GitHub filter';
     return null;
   }
+  if (body.events?.includes('project.item.status_changed')) {
+    if (body.events.length !== 1 || !body.projectTrigger) return 'Select the project status event alone and provide a Project URL and target status';
+  } else if (body.projectTrigger) return 'Project settings require the project status event';
   if (!body.events?.length) return 'a GitHub automation needs at least one event';
   if (body.intervalSeconds === undefined) return 'a GitHub automation needs a poll interval';
   if (!body.filters) return 'a GitHub automation needs its bounded filter';
@@ -3525,8 +3531,9 @@ export function createApp(deps: ServerDeps) {
       revision: automation.revision,
       baselineAt,
       checkpoint: undefined,
+      projectPoll: undefined,
       cursor: { timestamp: baselineAt },
-      nextCheckAt: new Date(now + (automation.intervalSeconds ?? 300) * 1_000).toISOString(),
+      nextCheckAt: new Date(automation.projectTrigger ? now : now + (automation.intervalSeconds ?? 300) * 1_000).toISOString(),
     }));
     store.appendLog({ automationId: automation.id, revision: automation.revision, result: 'baseline', reason: 'Enabled from a current-time baseline; existing records were not launched.' });
   };
@@ -3730,12 +3737,14 @@ export function createApp(deps: ServerDeps) {
           trigger?.association,
           trigger?.events.length === 1 ? trigger.events[0] : undefined,
         ]);
+        const projectSourceChanged = JSON.stringify(current.projectTrigger) !== JSON.stringify(input.projectTrigger);
         const trackerSourceChanged = kind === 'tracker'
           && trackerScanIdentity(current.trackerTrigger) !== trackerScanIdentity(input.trackerTrigger);
         const automation = automationStore.update(
           c.req.param('id'), expectedRevision,
           { ...input, kind, enabled: input.enabled ?? false },
           definition => {
+            if (projectSourceChanged) automationStore.setState(definition.id, state => ({ ...state, projectPoll: undefined }));
             // Publish the new baseline and definition under the same mutation lease.
             if (kind === 'tracker' && definition.enabled && (!current.enabled || trackerSourceChanged)) armAutomation(automationStore, definition);
             else if (trackerSourceChanged) {
@@ -3846,6 +3855,7 @@ export function createApp(deps: ServerDeps) {
             timeZone: localTimeZone(),
             store,
             github: { owner: remote.owner, repo: remote.repo, poller: new GithubPoller() },
+            canLaunchProject: async id => !project.store.listRuns().some(run => run.automation?.automationId === id && ['queued', 'running', 'waiting'].includes(run.status)),
             launch: parsed.data.mode === 'execute'
               ? (definition, candidate, receiptId) => launchAutomationRun({ root: project.root, manager: project.manager, store: project.store, definition, candidate, receiptId, dispatchEnabled: capabilities().dispatch })
               : undefined,
@@ -6500,6 +6510,10 @@ export function startServer(deps: ServerDeps, port: number): ServerType {
         },
         onChange: (automationId, revision) =>
           workspaceEvents.emit('automation-change', { project: projectId, automationId, revision }),
+        canLaunchProject: async id => {
+          const context = await contextOf();
+          return !context.store.listRuns().some(run => run.automation?.automationId === id && ['queued', 'running', 'waiting'].includes(run.status));
+        },
         launch: async (definition, candidate, receiptId) => {
           const context = await contextOf();
           return launchAutomationRun({ root: context.root, manager: context.manager, store: context.store, definition, candidate, receiptId, dispatchEnabled });

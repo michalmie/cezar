@@ -35,6 +35,19 @@ describe('EditorGithubFields', () => {
     expect(screen.queryByRole('button', { name: 'release.published' })).toBeNull()
   })
 
+  it('selects the project event exclusively and shows editable board settings', () => {
+    render(<Harness />)
+    fireEvent.click(screen.getByRole('button', { name: 'project.item.status_changed' }))
+    expect(screen.getByTestId('events').textContent).toBe('project.item.status_changed')
+    expect(screen.getByLabelText('GitHub Project URL')).not.toBeNull()
+    expect((screen.getByLabelText('Target status (exact name)') as HTMLInputElement).value).toBe('Ready')
+    fireEvent.change(screen.getByLabelText('GitHub Project URL'), { target: { value: 'https://github.com/users/acme/projects/1' } })
+    expect((screen.getByLabelText('GitHub Project URL') as HTMLInputElement).value).toBe('https://github.com/users/acme/projects/1')
+    fireEvent.click(screen.getByRole('button', { name: 'issue.opened' }))
+    expect(screen.getByTestId('events').textContent).toBe('issue.opened')
+    expect(screen.queryByLabelText('GitHub Project URL')).toBeNull()
+  })
+
   it('shows the poll line from the filters', () => {
     render(<Harness />)
     expect(screen.getByText('· last 7 days · maximum 25 records')).not.toBeNull()

@@ -14,6 +14,8 @@ export async function runEventPollCycle<C extends { timestamp: string }, R exten
   poll: (state: AutomationRuntimeState) => Promise<R>;
   /** Runs under the snapshot mutation lease, only for a current execute cycle. */
   prepareState?: (state: AutomationRuntimeState) => void;
+  /** Durably record observations before reserving any launch receipt. */
+  checkpoint?: (result: R, current: AutomationRuntimeState) => AutomationRuntimeState;
   eligible?: (candidate: C, state: AutomationRuntimeState) => boolean;
   isCurrent?: () => Promise<boolean>;
   launch?: (candidate: C) => Promise<void>;
@@ -70,6 +72,15 @@ export async function runEventPollCycle<C extends { timestamp: string }, R exten
       && (!input.eligible || input.eligible(candidate, state)),
     );
     if (mode === 'execute') {
+      if (input.checkpoint) {
+        const mutation = store.acquireMutationLease();
+        if (!mutation) throw new Error('automation mutation conflict');
+        try {
+          if (!current() || (input.isCurrent && !await input.isCurrent())) return { ...result, candidates: [] };
+          if (!lease.isValid() || !mutation.isValid()) throw new Error('automation lease was lost');
+          store.setState(definition.id, latest => input.checkpoint!(result, latest));
+        } finally { mutation.release(); }
+      }
       for (const candidate of eligible) {
         if (!lease.isValid()) throw new Error('automation polling lease was lost');
         const mutation = store.acquireMutationLease();

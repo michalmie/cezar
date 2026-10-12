@@ -14,6 +14,7 @@ export interface CliDefinition {
   name: string
   kind: 'github' | 'schedule' | 'tracker'
   trackerTrigger?: AutomationDefinition['trackerTrigger']
+  projectTrigger?: AutomationDefinition['projectTrigger']
   schedule?: AutomationSchedule
   events?: AutomationEvent[]
   intervalSeconds?: number
@@ -39,7 +40,7 @@ export function everyFlag(seconds: number): string {
 }
 
 export function flagExpressible(definition: CliDefinition): boolean {
-  if (definition.kind === 'tracker') return false
+  if (definition.kind === 'tracker' || definition.projectTrigger) return false
   if (definition.kind === 'schedule') return !!definition.schedule
   if (!definition.events?.length) return false
   const filters = definition.filters ?? {}
@@ -87,6 +88,7 @@ export function cliJsonOf(definition: CliDefinition): string {
       : definition.kind === 'tracker'
         ? { trackerTrigger: definition.trackerTrigger, intervalSeconds: definition.intervalSeconds ?? 1800, filters: { lookbackDays: 7, maxRecords: 25, ...definition.filters } }
         : { events: definition.events, intervalSeconds: definition.intervalSeconds ?? 300, filters: { lookbackDays: 7, maxRecords: 25, ...definition.filters } }),
+    ...(definition.projectTrigger ? { projectTrigger: definition.projectTrigger } : {}),
     task: definition.task,
     ...(definition.enable ? { enable: true } : {}),
   }

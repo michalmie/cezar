@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   DISPATCH_MAX_SUBTASKS,
+  projectTriggerSchema, projectPollStateSchema,
   trackerTriggerSchema,
   trackerAutomationEventSchema,
   trackerAssociationSchema,
@@ -18,6 +19,7 @@ export const automationEventSchema = z.enum([
   'pull_request.reviewed',
   'pull_request.review_requested',
   'pull_request.rereview_requested',
+  'project.item.status_changed',
 ]);
 
 const boundedString = z.string().trim().min(1).max(200);
@@ -96,10 +98,11 @@ export const automationDefinitionObjectSchema = z
     enabled: z.boolean().default(false),
     /** A definition written before schedules (spec 2026-09-14) has no `kind`: it is a poll. */
     kind: z.enum(['github', 'schedule', 'tracker']).default('github'),
-    events: z.array(automationEventSchema).min(1).max(7).optional(),
+    events: z.array(automationEventSchema).min(1).max(8).optional(),
     intervalSeconds: z.number().int().min(60).max(86_400).optional(),
     filters: automationFiltersSchema.optional(),
     trackerTrigger: trackerTriggerSchema.optional(),
+    projectTrigger: projectTriggerSchema.optional(),
     schedule: automationScheduleSchema.optional(),
     task: automationTaskSchema,
     createdAt: z.string().datetime(),
@@ -107,6 +110,7 @@ export const automationDefinitionObjectSchema = z
   })
   .passthrough()
   .superRefine((definition, ctx) => {
+    if (definition.kind !== 'github' && definition.projectTrigger) ctx.addIssue({ code: 'custom', path: ['projectTrigger'], message: 'Project settings require a GitHub automation' });
     if (definition.kind === 'schedule') {
       if (!definition.schedule) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['schedule'], message: 'a scheduled automation needs a schedule' });
@@ -122,6 +126,9 @@ export const automationDefinitionObjectSchema = z
       }
       return;
     }
+    if (definition.events?.includes('project.item.status_changed')) {
+      if (definition.events.length !== 1 || !definition.projectTrigger) ctx.addIssue({ code: 'custom', path: ['projectTrigger'], message: 'Select the project status event alone and provide a Project URL and target status' });
+    } else if (definition.projectTrigger) ctx.addIssue({ code: 'custom', path: ['projectTrigger'], message: 'Project settings require the project status event' });
     // github kind: the three poll keys are required, as they always were.
     if (!definition.events?.length) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['events'], message: 'a GitHub automation needs at least one event' });
@@ -167,6 +174,7 @@ export const automationRuntimeStateSchema = z
     baselineAt: z.string().datetime().optional(),
     cursor: automationCursorSchema.optional(),
     checkpoint: z.string().optional(),
+    projectPoll: projectPollStateSchema.optional(),
     frozenHighWatermark: automationCursorSchema
       .extend({ tieBreaker: z.string() })
       .optional(),
@@ -217,6 +225,7 @@ export const automationReceiptSchema = z
         assignees: z.array(z.string().max(200)).max(100), labels: z.array(z.string().max(200)).max(100),
         changedLabel: z.string().max(200).optional(),
         reviewer: z.string().max(200).optional(),
+        projectItemId: z.string().optional(),
       })
       .passthrough()
       .optional(),

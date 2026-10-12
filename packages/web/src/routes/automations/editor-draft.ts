@@ -47,6 +47,7 @@ export interface EditorDraft {
   name: string
   kind: EditableAutomationKind
   trackerTrigger?: AutomationDefinition['trackerTrigger']
+  projectTrigger?: AutomationDefinition['projectTrigger']
   schedule: AutomationSchedule
   events: AutomationEvent[]
   intervalSeconds: number
@@ -80,6 +81,7 @@ export const GITHUB_EVENTS: readonly AutomationEvent[] = [
   'pull_request.reviewed',
   'pull_request.review_requested',
   'pull_request.rereview_requested',
+  'project.item.status_changed',
 ]
 
 type TaskSteps = NonNullable<AutomationDefinition['task']['steps']>
@@ -164,6 +166,7 @@ export function fromDefinition(definition: AutomationDefinition): EditorDraft {
     name: definition.name,
     kind: definition.kind,
     trackerTrigger: definition.trackerTrigger,
+    projectTrigger: definition.projectTrigger,
     schedule: definition.schedule ? { ...definition.schedule } : base.schedule,
     events: definition.events?.length ? [...definition.events] : base.events,
     intervalSeconds: definition.intervalSeconds ?? base.intervalSeconds,
@@ -291,6 +294,7 @@ export function toBody(draft: EditorDraft): AutomationBody {
   return {
     name: draft.name.trim(),
     kind: 'github',
+    ...(draft.events.includes('project.item.status_changed') ? { projectTrigger: draft.projectTrigger } : {}),
     events: [...draft.events],
     intervalSeconds: draft.intervalSeconds,
     filters: {
@@ -321,6 +325,7 @@ export function cliDefinitionOf(draft: EditorDraft): CliDefinition {
   return {
     name: body.name,
     kind: draft.kind,
+    ...(body.projectTrigger ? { projectTrigger: body.projectTrigger } : {}),
     ...(body.trackerTrigger ? { trackerTrigger: body.trackerTrigger } : {}),
     ...(body.schedule ? { schedule: body.schedule } : {}),
     ...(body.events ? { events: body.events } : {}),

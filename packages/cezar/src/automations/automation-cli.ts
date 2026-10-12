@@ -67,7 +67,7 @@ const CHECK_POLL_MS = 500;
 const CHECK_TIMEOUT_MS = 120_000;
 
 /** The keys `PUT /automations/:id` accepts besides `enabled` and `expectedRevision`. */
-const EDITABLE_KEYS = ['name', 'description', 'kind', 'events', 'intervalSeconds', 'filters', 'schedule', 'trackerTrigger', 'task'] as const;
+const EDITABLE_KEYS = ['name', 'description', 'kind', 'events', 'intervalSeconds', 'filters', 'schedule', 'trackerTrigger', 'projectTrigger', 'task'] as const;
 
 function base(env: AutomationCliEnv): { url: string; scope: string; projectId?: string } | null {
   const url = env.CEZ_API_URL?.replace(/\/+$/, '');

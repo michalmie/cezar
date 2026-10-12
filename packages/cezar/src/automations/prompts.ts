@@ -29,7 +29,7 @@ A GitHub poll:
   "name": "Review every new pull request",          // required, 1-200 chars
   "description": "What this automation is for",      // optional, up to 2000 chars
   "kind": "github",                                  // optional here — omitted means a GitHub poll
-  "events": ["pull_request.opened"],                 // 1-7 of: pull_request.opened, issue.opened, issue.labeled, issue.unlabeled, pull_request.reviewed, pull_request.review_requested, pull_request.rereview_requested
+  "events": ["pull_request.opened"],                 // 1-8 of: pull_request.opened, issue.opened, issue.labeled, issue.unlabeled, pull_request.reviewed, pull_request.review_requested, pull_request.rereview_requested
   "intervalSeconds": 300,                            // required: how often GitHub is polled, in seconds, 60-86400 (300 is the usual choice)
   "filters": {                                       // required, may be {}; every key optional; a candidate must pass ALL given filters
     "authors": ["octocat"],                          //   GitHub logins that opened it
@@ -105,6 +105,8 @@ A schedule — same "name", "description" and "task", but "kind": "schedule" and
 }
 
 For a GitHub poll, name, events, intervalSeconds, filters and task are required; for a tracker poll, name, kind, trackerTrigger, intervalSeconds, filters and task; for a schedule, name, kind, schedule and task. No other top-level key is accepted. Schedules run in the cockpit's own time zone.
+
+Project status polling: use kind "github", events ["project.item.status_changed"] alone, "projectTrigger" { "url": "https://github.com/users/OWNER/projects/NUMBER", "targetStatus": "Ready" }, intervalSeconds 300 and filters. Organization URLs also work. The first complete check baselines existing cards; subsequent observed entries into the exact Status option queue open issues from this repository, one launch at a time. Transitions entirely between checks can be missed. This event uses the same github placeholders and native receipt/recovery mechanism.
 
 Prompt placeholders, substituted per launch — GitHub poll: {{github.kind}} (issue | pull request), {{github.number}}, {{github.title}}, {{github.url}}, {{github.author}}, {{github.assignees}}, {{github.labels}} and {{github.event}}; schedule: {{date}}, {{time}}, {{project}} and {{automation}}. Any other {{…}} is rejected. The matched item's title, author, labels and URL (or the scheduled instant) are also appended to every launched task as untrusted context, so the prompt need not repeat them.
 

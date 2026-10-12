@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { projectTriggerSchema, projectPollStateSchema } from './project-automations.ts';
+export { projectTriggerSchema, projectPollStateSchema, projectStatusCandidateSchema } from './project-automations.ts';
 import { trackerAssociationSchema, trackerFailureSchema } from './tracker.ts';
 // An automation launches an ORDINARY cezar task, so the task it carries is the composer's own
 // run-creation input minus the keys an automation supplies itself. Consumed rather than
@@ -37,6 +39,7 @@ export const automationEventSchema = z.enum([
   'pull_request.reviewed',
   'pull_request.review_requested',
   'pull_request.rereview_requested',
+  'project.item.status_changed',
 ]);
 export type AutomationEvent = z.infer<typeof automationEventSchema>;
 
@@ -152,6 +155,7 @@ export const automationDefinitionSchema = z.object({
   filters: automationFiltersSchema.optional(),
   /** `schedule` kind: always present. `github` kind: absent. */
   trackerTrigger: trackerTriggerSchema.optional(),
+  projectTrigger: projectTriggerSchema.optional(),
   schedule: automationScheduleSchema.optional(),
   task: automationTaskSchema,
   createdAt: z.string(),
@@ -179,6 +183,7 @@ export const automationRuntimeStateSchema = z.object({
   baselineAt: z.string().optional(),
   cursor: automationCursorSchema.optional(),
   checkpoint: z.string().optional(),
+  projectPoll: projectPollStateSchema.optional(),
   frozenHighWatermark: automationCursorSchema.extend({ tieBreaker: z.string() }).optional(),
   backlogAfter: automationCursorSchema.extend({ tieBreaker: z.string() }).optional(),
   /** The cursor a widening re-poll could not get past even at the search ceiling (#982). */
@@ -395,6 +400,7 @@ export const automationTemplateSchema = z.object({
    *  offers a tracker automation as a template (`automationTemplatesOf` skips it). */
   kind: z.enum(['github', 'schedule']),
   trackerTrigger: trackerTriggerSchema.optional(),
+  projectTrigger: projectTriggerSchema.optional(),
   schedule: automationScheduleSchema.optional(),
   events: z.array(automationEventSchema).optional(),
   intervalSeconds: z.number().optional(),
