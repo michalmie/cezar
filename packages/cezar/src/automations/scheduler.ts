@@ -173,6 +173,8 @@ export class ProjectAutomationScheduler {
   }
 
   private async launch(definition: GithubAutomationDefinition, candidate: GithubCandidate): Promise<void> {
+    // Recheck under the launch lease: a resume may have started after the board poll.
+    if (definition.projectTrigger && this.handle.canLaunchProject && !await this.handle.canLaunchProject(definition.id)) return;
     if (this.hasRecentReviewRequestReceipt(definition, candidate)) {
       this.handle.store.appendLog({ automationId: definition.id, revision: definition.revision, event: candidate.event, result: 'duplicate', reason: 'A durable receipt already exists for this automation and pull request review-request burst.', githubNumber: candidate.number, githubTitle: candidate.title, githubUrl: candidate.url });
       return;

@@ -21,7 +21,9 @@ monotonic transition sequence give pending events stable identities after a
 restart. Receipt reservation, durable run provenance, reconciliation, backoff and
 manual retry reuse the existing machinery. At most one event launches per check;
 the server defers further launches while this automation has queued/running/
-waiting work. Deferred events remain pending, and cards that leave the target
+waiting work, including failed runs with a durable automatic resume or unanswered
+question. The same gate applies to manual checks and retries, and is rechecked
+under the launch lease before reserving a receipt. Deferred events remain pending, and cards that leave the target
 status or stop matching are discarded. Preview never checkpoints or launches.
 Source edits, re-enable and an idle rebaseline clear the board snapshot.
 
@@ -35,4 +37,13 @@ Validation covers full pagination, baseline/entry/re-entry, queued identity,
 repository/type/state/archive/label eligibility, malformed URLs, partial responses,
 pre-launch checkpoints, busy deferral, read-only preview, receipt recovery and the
 editor's exclusive event selection. Existing schedule and GitHub event behavior
-is unchanged.
+is unchanged. The usage-limit regression keeps event identities and zero launch
+receipts across restart, then launches each pending issue once after recovery.
+
+Live regression evidence: NextGen Markt run f01a8918 (issue #4) failed on a Claude
+usage limit at 2026-10-12T13:06:35Z and retained an automatic resume at 17:50:30Z.
+The old gate launched #5 (6a026e68), #6 (8717fafc) and #7 (0db1a132) despite that
+unfinished run. Each agent reported a busy claim and skipped without changes,
+but emitted CEZ:DONE, consuming its Ready transition. Recovery must verify those
+specific skipped runs and current Ready cards before explicitly queuing fresh
+event identities; uncertain or completed launches must never be replayed.

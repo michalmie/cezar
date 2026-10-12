@@ -18,6 +18,7 @@ import { AutomationCoordinator } from '../automations/coordinator.ts';
 import { GithubPoller } from '../automations/github-poller.ts';
 import { TrackerPoller } from '../automations/tracker-poller.ts';
 import { ProjectAutomationScheduler, ProjectTrackerAutomationScheduler, WorkspaceAutomationScheduler, type ProjectAutomationHandle } from '../automations/scheduler.ts';
+import { canLaunchProjectAutomation } from '../automations/project-queue.ts';
 import { ScheduleRunner } from '../automations/schedule-runner.ts';
 import { automationStats } from '../automations/stats.ts';
 import { automationTemplatesOf } from '../automations/templates.ts';
@@ -4022,7 +4023,7 @@ export function createApp(deps: ServerDeps) {
             timeZone: localTimeZone(),
             store,
             github: { owner: remote.owner, repo: remote.repo, poller: new GithubPoller() },
-            canLaunchProject: async id => !project.store.listRuns().some(run => run.automation?.automationId === id && ['queued', 'running', 'waiting'].includes(run.status)),
+            canLaunchProject: async id => canLaunchProjectAutomation(project.store.listRuns(), id),
             launch: parsed.data.mode === 'execute'
               ? (definition, candidate, receiptId) => launchAutomationRun({ root: project.root, manager: project.manager, store: project.store, definition, candidate, receiptId, dispatchEnabled: capabilities().dispatch })
               : undefined,
@@ -4104,6 +4105,9 @@ export function createApp(deps: ServerDeps) {
       }
       if (!isGithubAutomation(definition)) return c.json({ error: 'automation kind cannot be retried' }, 409);
       if (!receipt.candidate) return c.json({ error: 'receipt predates retry context and cannot be retried safely' }, 409);
+      if (definition.projectTrigger && !canLaunchProjectAutomation(project.store.listRuns(), definition.id)) {
+        return c.json({ error: 'This project automation has unfinished work; retry after it finishes or is cancelled.' }, 409);
+      }
       const lease = store.acquireLease();
       if (!lease) return c.json({ error: 'automation polling lease is held by another process' }, 409);
       const mutation = store.acquireMutationLease();
@@ -7088,7 +7092,7 @@ export function startServer(deps: ServerDeps, port: number): ServerType {
           workspaceEvents.emit('automation-change', { project: projectId, automationId, revision }),
         canLaunchProject: async id => {
           const context = await contextOf();
-          return !context.store.listRuns().some(run => run.automation?.automationId === id && ['queued', 'running', 'waiting'].includes(run.status));
+          return canLaunchProjectAutomation(context.store.listRuns(), id);
         },
         launch: async (definition, candidate, receiptId) => {
           const context = await contextOf();

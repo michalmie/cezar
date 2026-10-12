@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GithubPoller, type GithubCandidate } from './github-poller.ts';
 import { ProjectAutomationScheduler } from './scheduler.ts';
 import { AutomationStore } from './store.ts';
+import { RunStore } from '../runs/store.ts';
+import { canLaunchProjectAutomation } from './project-queue.ts';
 import { automationDefinitionSchema, type GithubAutomationDefinition } from './types.ts';
 
 const definition: GithubAutomationDefinition = {
@@ -41,6 +43,76 @@ const dirs: string[] = [];
 afterEach(async () => { vi.useRealTimers(); await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
 
 describe('GitHub Project status polling', () => {
+  it('keeps Ready events pending across a usage-limit pause and restart, then launches each once', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cezar-project-resume-')); dirs.push(dir);
+    let store = AutomationStore.open(dir);
+    let runs = RunStore.open(dir);
+    const saved = store.create(definition, 'ready') as GithubAutomationDefinition;
+    store.setState(saved.id, () => ({ revision: saved.revision, baselineAt: '2026-07-26T00:00:00.000Z' }));
+    const { state, poller } = fixture();
+    const blocker = runs.createRun({ title: 'Issue 4', task: 'Implement issue 4', workflow: 'test', steps: [] });
+    runs.updateRun(blocker.id, {
+      status: 'failed', autoResumeAt: '2026-10-12T17:50:30.000Z',
+      automation: { automationId: saved.id, automationRevision: saved.revision, receiptId: 'previous',
+        event: 'project.item.status_changed', githubUrl: 'https://github.com/acme/demo/issues/4' },
+    });
+    const launch = vi.fn(async (_definition: GithubAutomationDefinition, candidate: GithubCandidate) => ({ runId: `run-${candidate.number}` }));
+    const scheduler = () => new ProjectAutomationScheduler({
+      projectId: 'p', timeZone: 'UTC', store, github: { owner: 'acme', repo: 'demo', poller }, launch,
+      canLaunchProject: async id => canLaunchProjectAutomation(runs.listRuns(), id),
+    });
+    await scheduler().check(saved);
+    state.items = [item(1, 'ready'), item(2, 'ready'), item(3, 'ready')];
+    await scheduler().check(saved);
+    expect(launch).not.toHaveBeenCalled();
+    expect(store.receipts()).toEqual([]);
+    const pending = store.state(saved.id)?.projectPoll?.pending;
+    expect(pending?.map(candidate => candidate.number)).toEqual([1, 3]);
+    runs.flush();
+    store = AutomationStore.open(dir);
+    runs = RunStore.open(dir);
+    await scheduler().check(saved);
+    expect(launch).not.toHaveBeenCalled();
+    expect(store.state(saved.id)?.projectPoll?.pending).toEqual(pending);
+    expect((await scheduler().check(saved, 'preview')).candidates).toHaveLength(2);
+    expect(store.receipts()).toEqual([]);
+    runs.updateRun(blocker.id, { status: 'running', autoResumeAt: undefined });
+    await scheduler().check(saved);
+    expect(launch).not.toHaveBeenCalled();
+    runs.updateRun(blocker.id, { status: 'done' });
+    await scheduler().check(saved);
+    expect(launch.mock.calls.map(call => call[1].number)).toEqual([1]);
+    expect(store.state(saved.id)?.projectPoll?.pending.map(candidate => candidate.number)).toEqual([3]);
+    await scheduler().check(saved);
+    await scheduler().check(saved);
+    expect(launch.mock.calls.map(call => call[1].number)).toEqual([1, 3]);
+    expect(store.receipts().filter(receipt => receipt.status === 'launched')).toHaveLength(2);
+    expect(store.state(saved.id)?.projectPoll?.pending).toEqual([]);
+    runs.flush();
+  });
+
+  it('retains the pending event if another run becomes busy between polling and launch', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cezar-project-race-')); dirs.push(dir);
+    const store = AutomationStore.open(dir);
+    const saved = store.create(definition, 'ready') as GithubAutomationDefinition;
+    const { state, poller } = fixture();
+    const launch = vi.fn(async () => ({ runId: 'new-run' }));
+    const canLaunchProject = vi.fn(async () => true);
+    const scheduler = new ProjectAutomationScheduler({ projectId: 'p', timeZone: 'UTC', store,
+      github: { owner: 'acme', repo: 'demo', poller }, launch, canLaunchProject });
+    await scheduler.check(saved);
+    state.items[0] = item(1, 'ready');
+    canLaunchProject.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    await scheduler.check(saved);
+    expect(launch).not.toHaveBeenCalled();
+    expect(store.receipts()).toEqual([]);
+    expect(store.state(saved.id)?.projectPoll?.pending.map(candidate => candidate.number)).toEqual([1]);
+    canLaunchProject.mockResolvedValue(true);
+    await scheduler.check(saved);
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect(store.state(saved.id)?.projectPoll?.pending).toEqual([]);
+  });
+
   it('baselines every page and detects entry into Ready once, including a newly added Ready issue', async () => {
     const { state, poller, run } = fixture(); state.paginate = true;
     const baseline = await poller.poll('acme', 'demo', definition);

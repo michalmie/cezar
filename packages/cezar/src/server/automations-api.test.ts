@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AutomationCoordinator } from '../automations/coordinator.ts';
 import { WorkspaceAutomationScheduler } from '../automations/scheduler.ts';
 import { AutomationStore } from '../automations/store.ts';
@@ -48,6 +48,36 @@ describe('GitHub automation API', () => {
     method,
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+  });
+
+  it('keeps a project retry receipt intact during a usage-limit pause and retries after recovery', async () => {
+    const automationStore = AutomationStore.open(join(root, '.ai/cezar'));
+    const definition = automationStore.create({ name: 'Ready', enabled: true, kind: 'github',
+      events: ['project.item.status_changed'], intervalSeconds: 300,
+      projectTrigger: { url: 'https://github.com/users/acme/projects/1', targetStatus: 'Ready' },
+      filters: { lookbackDays: 7, maxRecords: 25 }, task: { prompt: 'Implement {{github.url}}' } });
+    const receipt = automationStore.reserveReceipt({ automationId: definition.id, revision: definition.revision,
+      eventId: 'ready-5', candidate: { eventId: 'ready-5', event: 'project.item.status_changed',
+        timestamp: new Date().toISOString(), tieBreaker: 'ready-5', repo: 'acme/demo', nodeId: 'issue-5',
+        number: 5, title: 'Issue 5', url: 'https://github.com/acme/demo/issues/5', author: 'alice', assignees: [], labels: [] } })!;
+    automationStore.appendReceipt({ ...receipt, status: 'launch-error', error: 'temporary launch failure' });
+    const blocker = store.createRun({ title: 'Issue 4', task: 'Implement issue 4', workflow: 'test', steps: [] });
+    store.updateRun(blocker.id, { status: 'failed', autoResumeAt: '2026-10-12T17:50:30.000Z',
+      automation: { automationId: definition.id, automationRevision: definition.revision, receiptId: 'previous',
+        event: 'project.item.status_changed', githubUrl: 'https://github.com/acme/demo/issues/4' } });
+    const startRun = vi.fn((_workflow: unknown, input: { task: string }) =>
+      store.createRun({ title: 'Issue 5', task: input.task, workflow: 'test', steps: [] }));
+    const server = app({ automationStore, manager: { startRun } as unknown as RunManager });
+    const response = await apiRequest(server, `/api/v1/automation-log/${receipt.receiptId}/retry`, { method: 'POST' });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: expect.stringContaining('unfinished work') });
+    expect(startRun).not.toHaveBeenCalled();
+    expect(automationStore.latestReceipts().get(`${definition.id}:ready-5`)).toMatchObject({ status: 'launch-error' });
+    store.updateRun(blocker.id, { status: 'done', autoResumeAt: undefined });
+    const retried = await apiRequest(server, `/api/v1/automation-log/${receipt.receiptId}/retry`, { method: 'POST' });
+    expect(retried.status).toBe(202);
+    expect(startRun).toHaveBeenCalledTimes(1);
+    expect(automationStore.latestReceipts().get(`${definition.id}:ready-5`)).toMatchObject({ status: 'launched', runId: expect.any(String) });
   });
 
   it('reports unavailable tracker event options without exposing credentials', async () => {
