@@ -1544,6 +1544,7 @@ function Inspector({
       {node.type === 'github.pr-comment' && (
         <Field label="comment body">
           <Textarea value={node.body} rows={3} onChange={(e) => set({ body: e.target.value })} />
+          <p className="text-xs text-muted-foreground">{'Use {{summary}} for delivered changes, validation and limitations.'}</p>
         </Field>
       )}
 
@@ -1643,6 +1644,7 @@ function Inspector({
           </Field>
           <Field label="comment">
             <Textarea value={node.body} rows={3} onChange={(e) => set({ body: e.target.value })} />
+            <p className="text-xs text-muted-foreground">{'Use {{summary}} for delivered changes, validation and limitations.'}</p>
           </Field>
         </>
       )}

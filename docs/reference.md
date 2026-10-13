@@ -403,6 +403,16 @@ whose counter never resets within a run, so every run is finite.
 | `github.issue-comment` (`body`, `issue?` — default: the task's issue) | `done`, `failed` | `issue` |
 | `notify.webhook` (`url`, `body?` — needs `CEZ_WORKFLOW_WEBHOOKS=1`) | `done`, `failed` | `status` |
 
+Draft PR descriptions use the task's delivery report: completed changes, actual validation
+and remaining limitations. Agents maintain `## Delivery summary` in the handoff journal;
+older tasks fall back to resume notes and agent milestones, then saved workflow-node
+reports or an assistant response.
+Engine lifecycle timestamps and the starting prompt are not delivery summaries.
+PR and issue comment bodies accept `{{summary}}` for the same report (the default for new
+comment nodes). Use `{{nodes.<id>.summary}}` to quote one particular agent instead.
+Existing custom comment bodies remain unchanged; replace `{{task}}` with `{{summary}}`
+to publish results. A comment requesting `{{summary}}` fails without posting if no report exists.
+
 - **Fork / join.** Each fork port leads to one agent node, and every one of those agents
   leads into the same `join`. The agents run at once as subtasks through dispatch — fresh
   sessions, each in its own worktree forked from the task branch (the fork commits the

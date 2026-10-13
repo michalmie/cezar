@@ -269,8 +269,10 @@ export type DraftPrOutcome =
 export interface DraftPrInput {
   repoRoot: string;
   run: RunRecord;
-  /** The task's handoff.md — becomes the PR body (goal + progress skim). */
+  /** The task's handoff.md supplies delivery evidence for older callers. */
   handoffText: string;
+  /** Delivery report resolved from the journal or the persisted final agent response. */
+  summary?: string;
   /** Open it as a draft. Absent = draft — what every caller got before this flag existed. */
   draft?: boolean;
 }

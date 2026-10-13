@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { z } from 'zod';
 import { REFERENCE_STATUS_MAX } from '@open-mercato/cezar-contract';
 import { autosaveCommit } from '../../git-worktree.ts';
+import { deliverySummary } from '../../runs/delivery-summary.ts';
 import type {
   DraftPrInput,
   DraftPrOutcome,
@@ -2614,7 +2615,6 @@ function mockGithubComments(kind: 'issue' | 'pr'): ForgeCommentsData {
 
 const PR_URL_RE = /https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+/;
 const PUSH_TIMEOUT_MS = 60_000;
-const PROGRESS_LINES_MAX = 10;
 
 export async function createDraftPr(input: DraftPrInput): Promise<DraftPrOutcome> {
   const { run } = input;
@@ -2656,7 +2656,7 @@ export async function createDraftPr(input: DraftPrInput): Promise<DraftPrOutcome
     return { ok: false, error: `git push failed — ${tail(push.stderr) || 'unknown error'}` };
   }
 
-  const body = buildPrBody(input.handoffText, run.task);
+  const body = buildPrBody(input.handoffText, run.task, input.summary);
   // Target the branch the worktree forked from (config `baseBranch`) — without
   // --base, gh aims at the repo default (main) even when work started on
   // develop. `origin/x` normalizes to `x`; a raw sha (detached-HEAD fork
@@ -2685,31 +2685,13 @@ export async function createDraftPr(input: DraftPrInput): Promise<DraftPrOutcome
   return { ok: true, url: match[0], dryRun: false };
 }
 
-/**
- * PR body from the handoff journal: the "## Goal" section (task text as
- * fallback) + the first ~10 lines of "## Progress log" (newest first) +
- * the cezar footer.
- */
-export function buildPrBody(handoffText: string, task: string): string {
-  const goal = section(handoffText, '## Goal') || task.trim();
-  const progress = section(handoffText, '## Progress log')
-    .split('\n')
-    .filter((l) => l.trim())
-    .slice(0, PROGRESS_LINES_MAX)
-    .join('\n');
-  const parts = ['## Goal', '', goal];
-  if (progress) parts.push('', '## Progress log', '', progress);
+/** Use the recorded delivery report; missing reports must not imply completed work. */
+export function buildPrBody(handoffText: string, task: string, summary?: string): string {
+  const report = summary?.trim() || deliverySummary(handoffText, undefined, { task });
+  const parts = ['## Summary', '', report || 'No delivery summary was recorded for this task.'];
+  if (!report) parts.push('', '## Task', '', task.trim().split('\n')[0]?.slice(0, 200) ?? '');
   parts.push('', '---', '', '🤖 made with cezar');
   return parts.join('\n');
-}
-
-/** Text of one `## Header` section, up to the next `## ` header. */
-function section(text: string, header: string): string {
-  const start = text.indexOf(`${header}\n`);
-  if (start < 0) return '';
-  const rest = text.slice(start + header.length + 1);
-  const next = rest.indexOf('\n## ');
-  return (next >= 0 ? rest.slice(0, next) : rest).trim();
 }
 
 /** Last 3 stderr lines, pipe-joined — enough context, toast-sized. */

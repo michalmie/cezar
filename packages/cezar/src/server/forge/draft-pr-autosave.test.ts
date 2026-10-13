@@ -159,4 +159,12 @@ describe('createDraftPr draft flag', () => {
     expect(outcome.ok).toBe(true);
     expect(argv()).not.toContain('--draft');
   });
+
+  it('sends the delivery report as the GitHub PR body', async () => {
+    const summary = 'Implemented price history.\n\n### Validation\n73 tests passed.';
+    const outcome = await createDraftPr({ ...input(), summary });
+    expect(outcome.ok).toBe(true);
+    expect(readFileSync(join(bin, 'argv'), 'utf8')).toContain(`--body\n## Summary\n\n${summary}`);
+    expect(readFileSync(join(bin, 'argv'), 'utf8')).not.toContain('do the thing');
+  });
 });

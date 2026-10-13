@@ -175,7 +175,7 @@ export function newNode(type: GraphNodeType, taken: Iterable<string>): WorkflowG
     case 'github.wait-ci':
       return { id: uniqueId('ci', taken), type, timeoutMs: 60 * 60_000, pollMs: 60_000 }
     case 'github.pr-comment':
-      return { id: uniqueId('comment', taken), type, body: 'Update: {{task}}' }
+      return { id: uniqueId('comment', taken), type, body: '{{summary}}' }
     case 'fork':
       return { id: uniqueId('fork', taken), type, branches: 3 }
     case 'join':
@@ -191,7 +191,7 @@ export function newNode(type: GraphNodeType, taken: Iterable<string>): WorkflowG
     case 'github.pr-update':
       return { id: uniqueId('pr-update', taken), type, ready: true }
     case 'github.issue-comment':
-      return { id: uniqueId('issue-comment', taken), type, body: 'Update from cezar: {{task}}' }
+      return { id: uniqueId('issue-comment', taken), type, body: '{{summary}}' }
     case 'notify.webhook':
       return { id: uniqueId('webhook', taken), type, url: 'https://example.com/hook', body: 'cezar: {{task}}' }
   }

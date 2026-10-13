@@ -119,6 +119,7 @@ import { SelfUpdateBusyError, SelfUpdateService } from '../self-update/service.t
 import { StarCountReader } from './star-count.ts';
 import { getTeamSkillsCached, refreshTeamSkills, waitForTeamSkills } from '../skills-remote.ts';
 import { appendHandoffHeartbeat, handoffProgressExcerpt, readHandoff } from '../handoff.ts';
+import { readRunDeliverySummary } from '../runs/delivery-summary.ts';
 import { markStarted, onTodosChanged, readTodos, removeTodo, todoTaskText, type TodoItem } from '../todos.ts';
 import type { RunEvent, RunRecord, RunStatus, RunStore } from '../runs/store.ts';
 import {
@@ -5031,6 +5032,7 @@ export function createApp(deps: ServerDeps) {
         repoRoot,
         run,
         handoffText: readHandoff(dataDir, id),
+        summary: readRunDeliverySummary(dataDir, store, id),
         draft,
       });
       if (!outcome.ok) {

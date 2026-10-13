@@ -75,6 +75,7 @@ import {
 } from '../git-worktree.ts';
 import { commentOnIssue, commentOnPr, fetchGithubChecks, updatePr } from '../server/forge/github.ts';
 import { createDraftPr } from '../server/pr.ts';
+import { readRunDeliverySummary, renderDeliveryComment } from '../runs/delivery-summary.ts';
 import { getHeadCommit, getRepoInfo } from '../server/git.ts';
 import { loadWorkflows, newerCatalogWorkflow } from './load.ts';
 import type { QueuedMessage, RunRecord, RunStore, StepState } from '../runs/store.ts';
@@ -5255,6 +5256,7 @@ export class RunManager {
           repoRoot: this.repoRoot,
           run: title ? { ...run, title } : run,
           handoffText: readHandoff(this.dataDir, runId),
+          summary: readRunDeliverySummary(this.dataDir, this.store, runId),
         });
         if (!outcome.ok) {
           note(`draft PR failed — ${outcome.error}`, 'danger');
@@ -5273,7 +5275,12 @@ export class RunManager {
           note('no PR on this task to comment on', 'danger');
           return 'failed';
         }
-        const res = await commentOnPr(this.repoRoot, number, render(node.body));
+        const body = renderDeliveryComment(node.body, render, () => readRunDeliverySummary(this.dataDir, this.store, runId));
+        if (body === undefined) {
+          note('no delivery summary recorded for this task', 'danger');
+          return 'failed';
+        }
+        const res = await commentOnPr(this.repoRoot, number, body);
         if (!res.ok) {
           note(`PR comment failed — ${res.error}`, 'danger');
           return 'failed';
@@ -5383,7 +5390,12 @@ export class RunManager {
           note('no issue on this task to comment on (set one on the node)', 'danger');
           return 'failed';
         }
-        const res = await commentOnIssue(this.repoRoot, issue, render(node.body));
+        const body = renderDeliveryComment(node.body, render, () => readRunDeliverySummary(this.dataDir, this.store, runId));
+        if (body === undefined) {
+          note('no delivery summary recorded for this task', 'danger');
+          return 'failed';
+        }
+        const res = await commentOnIssue(this.repoRoot, issue, body);
         if (!res.ok) {
           note(`issue comment failed — ${res.error}`, 'danger');
           return 'failed';

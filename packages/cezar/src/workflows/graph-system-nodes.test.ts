@@ -3,7 +3,10 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as github from '../server/forge/github.ts';
+import * as pr from '../server/pr.ts';
+import { handoffPath } from '../handoff.ts';
 import { RunStore, type RunRecord } from '../runs/store.ts';
 import { graphIssues, graphRailSteps, graphToSteps, type WorkflowGraph } from './graph.ts';
 import { WorkspaceSemaphore } from '../workspace/semaphore.ts';
@@ -39,6 +42,7 @@ describe('graph system nodes', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     manager.dispose();
     if (savedDryRun === undefined) delete process.env.CEZ_DRY_RUN;
     else process.env.CEZ_DRY_RUN = savedDryRun;
@@ -248,6 +252,58 @@ describe('graph system nodes', () => {
       ['ci', 'done'],
     ]);
   }, 40_000);
+
+  it('PR creation and both comment nodes use the saved delivery report after a restart', async () => {
+    const report = 'Implemented price history and storefront display.\n\n### Validation\n73 tests passed.\n\n### Limitations\nLive demo pending.';
+    const create = vi.spyOn(pr, 'createDraftPr').mockResolvedValue({ ok: true, url: 'https://github.com/acme/demo/pull/9', dryRun: true });
+    const prComment = vi.spyOn(github, 'commentOnPr').mockResolvedValue({ ok: true });
+    const issueComment = vi.spyOn(github, 'commentOnIssue').mockResolvedValue({ ok: true });
+    const graph: WorkflowGraph = {
+      nodes: [
+        { id: 'start', type: 'start' },
+        { id: 'gate', type: 'gate.human', message: 'Publish?' },
+        { id: 'pr', type: 'github.draft-pr' },
+        { id: 'comment', type: 'github.pr-comment', body: '{{summary}}\n\nPR: {{nodes.pr.url}}' },
+        { id: 'issue', type: 'github.issue-comment', issue: 3, body: '{{summary}}' },
+      ],
+      edges: [
+        { from: 'start', to: 'gate' },
+        { from: 'gate.approve', to: 'pr' },
+        { from: 'pr.created', to: 'comment' },
+        { from: 'comment', to: 'issue' },
+      ],
+    };
+    const id = manager.startRun(def(graph), { task: 'Pick one Ready issue', worktree: true }).id;
+    await until(id, parkedAt('gate'));
+    writeFileSync(handoffPath(join(repoRoot, '.ai/cezar'), id), `## Goal\nPick one Ready issue\n## Delivery summary\n${report}\n## Resume notes\n`);
+    manager.dispose();
+    store.flush();
+    store = RunStore.open(join(repoRoot, '.ai/cezar'), { keepLive: true });
+    manager = new RunManager(store, repoRoot);
+    await manager.recover();
+    await until(id, parkedAt('gate'));
+    manager.sendMessage(id, [{ type: 'text', text: 'Approve' }]);
+    const final = await until(id, terminal);
+    expect(final.status).not.toBe('failed');
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ summary: report }));
+    expect(prComment).toHaveBeenCalledWith(repoRoot, 9, `${report}\n\nPR: https://github.com/acme/demo/pull/9`);
+    expect(issueComment).toHaveBeenCalledWith(repoRoot, 3, report);
+  }, 30_000);
+
+  it.each(['github.pr-comment', 'github.issue-comment'] as const)('%s refuses an absent summary without posting', async (type) => {
+    const post = vi.spyOn(github, type === 'github.pr-comment' ? 'commentOnPr' : 'commentOnIssue').mockResolvedValue({ ok: true });
+    const graph: WorkflowGraph = {
+      nodes: [{ id: 'start', type: 'start' }, { id: 'gate', type: 'gate.human', message: 'Publish?' }, { id: 'comment', type, body: '{{summary}}', ...(type === 'github.issue-comment' ? { issue: 3 } : {}) }],
+      edges: [{ from: 'start', to: 'gate' }, { from: 'gate.approve', to: 'comment' }],
+    };
+    const id = manager.startRun(def(graph), { task: 'Generic starting instructions', worktree: false }).id;
+    await until(id, parkedAt('gate'));
+    if (type === 'github.pr-comment') store.updateRun(id, { pullRequestUrl: 'https://github.com/acme/demo/pull/9' });
+    manager.sendMessage(id, [{ type: 'text', text: 'Approve' }]);
+    expect((await until(id, terminal)).status).toBe('failed');
+    expect(post).not.toHaveBeenCalled();
+    expect(store.readEvents(id)).toContainEqual(expect.objectContaining({ message: 'no delivery summary recorded for this task' }));
+  }, 30_000);
 
   it('wait-ci with no PR takes failed, not red; the rail lists system nodes as check rows', async () => {
     const graph: WorkflowGraph = {

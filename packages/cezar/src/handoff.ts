@@ -136,6 +136,7 @@ export function seedHandoffFile(dataDir: string, run: HandoffSeed): string {
     (run.worktreePath ? `**Worktree:** ${run.worktreePath}\n` : '') +
     `\n## Goal\n\n${run.task.trim()}\n\n` +
     `## Progress log\n\n` +
+    `## Delivery summary\n\n` +
     `## Resume notes\n`;
   try {
     mkdirSync(dirname(file), { recursive: true });
@@ -242,6 +243,7 @@ CEZ_HANDOFF_FILE (env) is the absolute path to this task's rolling handoff file.
 1. At the start of work, read it — "Resume notes" left by a previous session is your starting context.
 2. After every meaningful milestone (passing tests, a commit, a PR, a scope decision), append one terse timestamped line under "## Progress log", newest at the top.
 3. Before finishing or pausing, update "## Resume notes" with what's done, what's next and any blockers. Leave it empty only when the task is truly complete.
+4. Before finishing, write or replace "## Delivery summary" with a concise cumulative report of what this task actually delivered: changed behavior, actual validation results (including checks not run), and remaining limitations or owner actions. Use "### Validation" and "### Limitations" within it when useful. Keep it current after follow-up work; retain it when clearing resume notes. Cezar uses this report for pull request descriptions and workflow comments. Do not copy the task instructions or claim unperformed checks.
 
 Task completion marker: when the task's goal is fully achieved and you have no question for the user, end your final message with a line containing exactly CEZ:DONE — cez then closes the session and marks the task finished. If you are waiting on the user (a question, a decision, missing input), just end your message normally; the session stays open for their reply. Never emit CEZ:DONE while anything is unfinished or unverified.
 
