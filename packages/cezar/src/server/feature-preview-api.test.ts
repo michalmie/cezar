@@ -59,6 +59,27 @@ it('requires the continuation trailer before offering a newer immutable task ver
   git('commit', '--amend', '-m', 'new feature\n\nReady-Issue: https://github.com/acme/demo/issues/9');
   expect(featurePreview(root, run)).toMatchObject({ available: true, commit: git('rev-parse', 'HEAD') });
 });
+it('offers the same completed application after a metadata-only finalize autosave', () => {
+  mkdirSync(join(root, '.ai/cezar'), { recursive: true });
+  json(join(root, '.ai/cezar/ready-result.json'), { summary: 'Validated result' });
+  git('add', '.ai/cezar/ready-result.json'); git('commit', '-m', 'cezar autosave (run finalize)');
+  expect(featurePreview(root, run)).toMatchObject({ available: true, commit: git('rev-parse', 'HEAD') });
+});
+it('keeps an autosave containing application changes behind the result gate', () => {
+  mkdirSync(join(root, '.ai/cezar'), { recursive: true });
+  json(join(root, '.ai/cezar/ready-result.json'), { summary: 'Unvalidated changes' });
+  writeFileSync(join(root, 'feature.txt'), 'new code');
+  git('add', '.ai/cezar/ready-result.json', 'feature.txt'); git('commit', '-m', 'cezar autosave (run finalize)');
+  expect(featurePreview(root, run).available).toBe(false);
+});
+it('recognizes a validated continuation followed by metadata autosave', () => {
+  writeFileSync(join(root, 'feature.txt'), 'continued code'); git('add', 'feature.txt');
+  git('commit', '-m', 'continued feature\n\nReady-Issue: https://github.com/acme/demo/issues/9');
+  mkdirSync(join(root, '.ai/cezar'), { recursive: true });
+  json(join(root, '.ai/cezar/ready-result.json'), { summary: 'Continued result' });
+  git('add', '.ai/cezar/ready-result.json'); git('commit', '-m', 'cezar autosave (run finalize)');
+  expect(featurePreview(root, run)).toMatchObject({ available: true, commit: git('rev-parse', 'HEAD') });
+});
 
 const client = hc<AppType>('http://localhost');
 type Route = InferResponseType<typeof client.api.v1.runs[':id']['feature-preview']['$get'], 200>;

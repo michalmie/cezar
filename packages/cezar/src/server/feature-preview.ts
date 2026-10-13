@@ -37,7 +37,20 @@ export function featurePreview(root: string, run: RunRecord): FeaturePreviewResp
     if (git('check-ref-format', '--branch', claim.branch) !== claim.branch) return unavailable('The task branch is unavailable.');
     const commit = git('rev-parse', `refs/heads/${claim.branch}^{commit}`);
     git('merge-base', '--is-ancestor', claim.commit, commit);
-    if (commit !== claim.commit && !git('show', '-s', '--format=%B', commit).split('\n').includes(`Ready-Issue: ${claim.issueUrl}`)) {
+    // Finalize can checkpoint Factory's report after the validated application.
+    // Only single-parent Cezar autosaves changing that exact report may inherit
+    // the parent's validation; application changes and merges still need a gate.
+    let validated = commit;
+    for (let depth = 0; validated !== claim.commit && depth < 100; depth++) {
+      const message = git('show', '-s', '--format=%B', validated);
+      if (message.split('\n').includes(`Ready-Issue: ${claim.issueUrl}`)) break;
+      const parents = git('show', '-s', '--format=%P', validated).split(' ');
+      if (parents.length !== 1 || !/^cezar autosave \([a-z -]+\)$/.test(message)) break;
+      const files = git('diff', '--name-only', '-z', parents[0]!, validated).split('\0').filter(Boolean);
+      if (files.length !== 1 || files[0] !== '.ai/cezar/ready-result.json') break;
+      validated = parents[0]!;
+    }
+    if (validated !== claim.commit && !git('show', '-s', '--format=%B', validated).split('\n').includes(`Ready-Issue: ${claim.issueUrl}`)) {
       return unavailable('Publish the newer completed task version before previewing.');
     }
     const adapter = JSON.parse(git('show', 'HEAD:deploy/preview.json'));
