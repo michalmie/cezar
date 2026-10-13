@@ -1,4 +1,6 @@
 import { projectTriggerSchema } from '@open-mercato/cezar-contract';
+import { featurePreviewParamsSchema } from '@open-mercato/cezar-contract';
+import { featurePreview } from './feature-preview.ts';
 import {
   trackerWatchInputSchema, trackerWatchParamsSchema, trackerWatchQuerySchema,
   trackerCandidatesQuerySchema, trackerListQuerySchema, trackerSearchQuerySchema, trackerItemQuerySchema, trackerReadScope,
@@ -4235,6 +4237,12 @@ export function createApp(deps: ServerDeps) {
   // ---- chained family: runs lifecycle + artifacts (project-scoped) ----
   const runsRoutes = new Hono<ProjectApiEnv>()
     .get('/runs', (c) => c.json(c.get('project').store.listRuns().map(withUsage)))
+
+    .get('/runs/:id/feature-preview', paramZodValidator(featurePreviewParamsSchema), (c) => {
+      const { root, store } = c.get('project');
+      const run = store.getRun(c.req.valid('param').id);
+      return run ? c.json(featurePreview(root, run)) : c.json({ error: 'not found' }, 404);
+    })
 
     // Registered before the `/:id/...` routes so "archive-finished" and "read-all"
     // never match as a run id.

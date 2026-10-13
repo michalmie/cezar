@@ -1,4 +1,5 @@
 import { trackerReadScope, resolveApiUrl, workspaceBrandingLogoResponseSchema } from '@open-mercato/cezar-api-client'
+import type { FeaturePreviewResponse } from '@open-mercato/cezar-api-client'
 import type { TrackerAutomationOptions } from '@open-mercato/cezar-api-client'
 import { trackerWatchHandleSchema, trackerWatchSnapshotSchema, type TrackerWatchInput } from "@open-mercato/cezar-api-client"
 import type {
@@ -430,6 +431,12 @@ async function requestText(path: string, init: RequestInit = {}): Promise<string
 }
 
 const runPath = (id: string, suffix = ''): string => `/runs/${encodeURIComponent(id)}${suffix}`
+
+export async function getFeaturePreview(id: string, opts?: ReadOptions): Promise<FeaturePreviewResponse> {
+  return unwrap(await cez.api.v1.p[':projectId'].runs[':id']['feature-preview'].$get(
+    { param: { projectId: queryScope(), id } }, init(opts),
+  ), runPath(id, '/feature-preview'))
+}
 
 // ---- reads --------------------------------------------------------------------------------
 

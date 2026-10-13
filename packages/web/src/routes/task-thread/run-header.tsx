@@ -87,6 +87,7 @@ import { useRunEngine } from './run-engine'
 import { WorkflowSteps } from './step-rail'
 import { useFinishRun } from './use-finish-run'
 import { useDraft } from './thread-draft'
+import { FeaturePreviewButton } from './feature-preview-button'
 
 /**
  * The run header (spec §"Task thread" → Header): editable title + status pill, the meta line,
@@ -203,6 +204,7 @@ function RunHeaderView({
             <span className="ml-auto flex shrink-0 items-center gap-2.5">
               {/* The run's state, top right, beside the git button it decides. */}
               <RunStatus attention={attention} queuePosition={queuePosition} />
+              <FeaturePreviewButton run={run} />
               {/* Phone-width only: above `md` the meta row never collapses, so a control to expand
                   it would be a permanently disabled-looking chevron next to always-visible content. */}
               <Button
