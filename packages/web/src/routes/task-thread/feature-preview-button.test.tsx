@@ -39,8 +39,8 @@ it('rejects stale GitHub result links instead of selecting the current version s
   expect((await screen.findByRole('alert')).textContent).toContain('older task version')
   expect(screen.queryByRole('dialog')).toBeNull(); expect(mergeGithubPr).not.toHaveBeenCalled()
 })
-it('merges the selected PR into main without a preview or rule override', async () => {
-  available(); vi.mocked(getGithubPrMergeState).mockResolvedValue({ available: true, mergeState: ready })
+it.each(['approved', 'not-required'] as const)('merges the selected PR into main with reviews %s without a preview or rule override', async reviewDecision => {
+  available(); vi.mocked(getGithubPrMergeState).mockResolvedValue({ available: true, mergeState: { ...ready, reviewDecision } })
   vi.mocked(mergeGithubPr).mockResolvedValue({ merged: true, number: 9, url: ready.url, method: 'squash' })
   show({ ...run, pullRequestUrl: ready.url }, `?featureAction=merge&commit=${commit}&number=9`)
   const dialog = await screen.findByRole('dialog')

@@ -1143,7 +1143,7 @@ function GithubMergeBox({ number }: { number: number }) {
             : state.canMerge ? 'Ready to merge'
               : 'Merge blocked'
   const reviewState: MergeRequirementState =
-    state.reviewDecision === 'approved' ? 'passing'
+    state.reviewDecision === 'approved' || state.reviewDecision === 'not-required' ? 'passing'
       : state.reviewDecision === 'unknown' ? 'unknown'
         : 'failing'
   const conflictState: MergeRequirementState =

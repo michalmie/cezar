@@ -2922,7 +2922,9 @@ export function normalizeMergeState(
         ? 'changes-requested'
         : pr.reviewDecision?.toUpperCase() === 'REVIEW_REQUIRED'
           ? 'review-required'
-          : 'unknown';
+          : (pr.reviewDecision === null || pr.reviewDecision === '') && requirements.readable
+            ? 'not-required'
+            : 'unknown';
   const checks: ForgePrCheck[] = (pr.statusCheckRollup ?? []).map((check) => ({
     name: check.name,
     state: mergeCheckState(check),
@@ -3139,7 +3141,17 @@ export async function fetchPrMergeState(
         '[.contexts[]?, .checks[]?.context] | unique',
       ])
         .then((output) => ({ readable: true, requiredChecks: z.array(z.string()).parse(JSON.parse(output)) }))
-        .catch(() => ({ readable: false, requiredChecks: [] as string[] })),
+        .catch(async () => {
+          // Missing protection is normal on an unprotected branch; a 404 alone can also hide
+          // unreadable rules. Confirm the branch explicitly before treating it as rule-free.
+          try {
+            const output = await gh(repoRoot, ['api', `repos/${repoRef.owner}/${repoRef.repo}/branches/${encodeURIComponent(parsedPr.baseRefName)}`]);
+            const branch = z.object({ protected: z.boolean() }).parse(JSON.parse(output));
+            return { readable: !branch.protected, requiredChecks: [] as string[] };
+          } catch {
+            return { readable: false, requiredChecks: [] as string[] };
+          }
+        }),
       fetchMergeChecks(repoRoot, repoRef, number),
     ]);
     const value: ForgePrMergeStateResult = {

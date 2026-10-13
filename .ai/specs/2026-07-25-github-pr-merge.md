@@ -148,6 +148,10 @@ The merge button’s label reflects the method (`Squash and merge`, `Create a me
 - Mergeability computing/checks rerunning: pending, manual refresh, disabled action; no polling.
 - Protection/rules unreadable: show observed checks, mark certainty unknown, disable mutation.
 - No CI: “No checks configured” is neutral when GitHub otherwise reports eligible.
+- No review policy: an explicit null (GraphQL) or empty (CLI) review decision is `not-required`
+  only with readable requirements. If the required-checks endpoint fails, branch metadata must
+  explicitly confirm `protected: false` before treating the branch as having no requirements;
+  a 404, protected branch, missing field or unreadable branch response remains unknown.
 - Head changes after review: 409, invalidate related views, explain and require re-review.
 - Method removed: 409, refresh allowed methods and select the new repository default.
 - Merged elsewhere/response lost: refreshed terminal state wins; do not offer blind retry.
@@ -186,4 +190,3 @@ Add confirmation, expected-head preflight, concurrency protection, mutation, rec
 - Success or external merge updates every visible project-local PR surface without contaminating another project.
 - Missing `gh`, offline GitHub, rate limits, and schema drift degrade without boot failure or credential leakage.
 - Mutation origin protection, Zod boundaries, themes, mobile, keyboard/focus, unit, and browser coverage pass.
-

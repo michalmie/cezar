@@ -176,6 +176,22 @@ describe('normalizeMergeState', () => {
     expect(state.checks[0]).toMatchObject({ name: 'test', state: 'passing', required: true });
   });
 
+  it.each([null, ''])('recognizes an explicit no-review decision (%s) with readable requirements', (reviewDecision) => {
+    const state = normalizeMergeState({ ...ready, reviewDecision }, {
+      allow_squash_merge: true,
+    }, { readable: true, requiredChecks: [] });
+    expect(state.reviewDecision).toBe('not-required');
+    expect(state.canMerge).toBe(true);
+  });
+
+  it.each([undefined, 'UNKNOWN', 'NEW_DECISION'])('keeps a missing or unknown review decision (%s) blocked', (reviewDecision) => {
+    const state = normalizeMergeState({ ...ready, reviewDecision }, {
+      allow_squash_merge: true,
+    }, { readable: true, requiredChecks: [] });
+    expect(state.reviewDecision).toBe('unknown');
+    expect(state.canMerge).toBe(false);
+  });
+
   it('never presents unknown rules or a changed review decision as ready', () => {
     const unknown = normalizeMergeState({ ...ready, mergeStateStatus: 'UNKNOWN' }, {
       allow_merge_commit: true,
@@ -3207,6 +3223,7 @@ describe('fetchPrMergeState and an unreadable statusCheckRollup (#969)', () => {
     detail?: () => unknown;
     aggregate?: () => unknown;
     protection?: () => unknown;
+    branch?: () => unknown;
   }) {
     const calls: string[] = [];
     execFileMock.mockImplementation((...args: unknown[]) => {
@@ -3234,6 +3251,9 @@ describe('fetchPrMergeState and an unreadable statusCheckRollup (#969)', () => {
       }
       if (argv[0] === 'api' && (argv[1] ?? '').includes('/protection/')) {
         return answer(routes.protection ?? (() => { throw notAccessible('gh api …/protection/required_status_checks'); }));
+      }
+      if (argv[0] === 'api' && (argv[1] ?? '').includes('/branches/')) {
+        return answer(routes.branch ?? (() => { throw notAccessible('gh api …/branches/main'); }));
       }
       if (argv[0] === 'api') return answer(() => policy);
       return cb(new Error(`unexpected gh ${argv.join(' ')}`), null);
@@ -3275,6 +3295,53 @@ describe('fetchPrMergeState and an unreadable statusCheckRollup (#969)', () => {
     const graphql = calls.find(call => call.startsWith('api graphql'));
     expect(graphql).toContain('headRefOid');
     expect(graphql).not.toContain('statusCheckRollup');
+  });
+
+  it('enables merging an unprotected branch with no review requirement through older gh', async () => {
+    const calls = routeGh({
+      core: () => { throw new Error('Unknown JSON field: "headRefOid"'); },
+      aggregate: () => ({ data: { repository: { pullRequest: { ...corePr, reviewDecision: null } } } }),
+      detail: () => ({ statusCheckRollup: [{ name: 'unit-tests', conclusion: 'SUCCESS' }] }),
+      protection: () => { throw new Error('Branch not protected (HTTP 404)'); },
+      branch: () => ({ protected: false }),
+    });
+    const out = await fetchPrMergeState('/repo/unprotected', repoRef, 353, true);
+    if (!out.available) throw new Error(out.reason);
+    expect(out.mergeState).toMatchObject({ reviewDecision: 'not-required', eligibility: 'ready', canMerge: true, blockers: [] });
+    expect(out.mergeState.checks).toEqual([{ name: 'unit-tests', state: 'passing', required: false }]);
+    expect(calls).toContain('api repos/acme/demo/branches/main');
+  });
+
+  it.each([{ protected: true }, {}, null])('does not treat protected or incomplete branch metadata (%s) as readable requirements', async (branch) => {
+    routeGh({
+      core: () => ({ ...corePr, reviewDecision: null }),
+      detail: () => ({ statusCheckRollup: [{ name: 'unit-tests', conclusion: 'SUCCESS' }] }),
+      protection: () => { throw new Error('Not Found (HTTP 404)'); },
+      branch: () => branch,
+    });
+    const out = await fetchPrMergeState('/repo/protected', repoRef, 353, true);
+    if (!out.available) throw new Error(out.reason);
+    expect(out.mergeState.canMerge).toBe(false);
+    expect(out.mergeState.checks[0]?.required).toBeNull();
+    expect(out.mergeState.blockers.map(blocker => blocker.code)).toContain('rules-unknown');
+  });
+
+  it.each([
+    { reviewDecision: 'CHANGES_REQUESTED', conclusion: 'SUCCESS', blocker: 'reviews' },
+    { reviewDecision: 'REVIEW_REQUIRED', conclusion: 'SUCCESS', blocker: 'reviews' },
+    { reviewDecision: null, conclusion: 'FAILURE', blocker: 'checks-failing' },
+    { reviewDecision: null, conclusion: 'PENDING', blocker: 'pending' },
+  ])('keeps $blocker blocking even on an unprotected branch', async ({ reviewDecision, conclusion, blocker }) => {
+    routeGh({
+      core: () => ({ ...corePr, reviewDecision }),
+      detail: () => ({ statusCheckRollup: [{ name: 'unit-tests', conclusion }] }),
+      protection: () => { throw new Error('Branch not protected (HTTP 404)'); },
+      branch: () => ({ protected: false }),
+    });
+    const out = await fetchPrMergeState('/repo/unprotected-blocked', repoRef, 353, true);
+    if (!out.available) throw new Error(out.reason);
+    expect(out.mergeState.canMerge).toBe(false);
+    expect(out.mergeState.blockers.map(entry => entry.code)).toContain(blocker);
   });
 
   it('keeps mergeable, mergeStateStatus and reviewDecision when the rollup detail is unreadable', async () => {

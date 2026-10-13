@@ -859,7 +859,7 @@ describe('the GitHub detail pane', () => {
     )
   })
 
-  it('shows authoritative merge state and requires confirmation before mutation', async () => {
+  it.each(['approved', 'not-required'])('shows authoritative merge state with reviews %s and requires confirmation before mutation', async (reviewDecision) => {
     const sent = stubFetch({
       'GET /api/v1/github/prs/137/merge-state': () => jsonResponse({
         available: true,
@@ -873,7 +873,7 @@ describe('the GitHub detail pane', () => {
           baseRef: 'main',
           headSha: '0123456789abcdef0123456789abcdef01234567',
           mergeable: 'mergeable',
-          reviewDecision: 'approved',
+          reviewDecision,
           checks: [{ name: 'test', state: 'passing', required: true, url: 'https://example.com/check' }],
           checksTier: 'detailed',
           methods: ['squash', 'rebase'],
@@ -896,7 +896,7 @@ describe('the GitHub detail pane', () => {
           baseRef: 'main',
           headSha: '0123456789abcdef0123456789abcdef01234567',
           mergeable: 'mergeable',
-          reviewDecision: 'approved',
+          reviewDecision,
           checks: [],
           checksTier: 'detailed',
           methods: ['squash'],
