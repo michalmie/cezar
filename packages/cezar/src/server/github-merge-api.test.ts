@@ -92,4 +92,12 @@ describe('the GitHub merge API', () => {
     });
     expect(response.status).toBe(403);
   });
+  it('refuses a merge when the pull request no longer targets the selected base', async () => {
+    const response = await apiRequest(app, '/api/v1/github/prs/128/merge', {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://127.0.0.1:4321' },
+      body: JSON.stringify({ method: 'squash', expectedHeadSha: '0123456789abcdef0123456789abcdef01234567', expectedBaseRef: 'develop' }),
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: 'stale-base' });
+  });
 });

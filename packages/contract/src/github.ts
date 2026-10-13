@@ -309,6 +309,13 @@ export type GithubCommentsData = z.infer<typeof githubCommentsDataSchema>;
 
 export const githubMergeMethodSchema = z.enum(['merge', 'squash', 'rebase']);
 export type GithubMergeMethod = z.infer<typeof githubMergeMethodSchema>;
+export const githubMergeRequestSchema = z.object({
+  method: githubMergeMethodSchema,
+  expectedHeadSha: z.string().regex(/^[0-9a-f]{40}$/),
+  expectedBaseRef: z.string().min(1).max(200).optional(),
+  overrideRules: z.boolean().optional().default(false),
+}).strict();
+export type GithubMergeRequest = z.input<typeof githubMergeRequestSchema>;
 
 /** One check row of the merge panel. */
 export const githubPrCheckSchema = z.object({

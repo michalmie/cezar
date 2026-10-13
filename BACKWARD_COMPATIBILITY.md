@@ -28,6 +28,15 @@ Breaking: renaming/removing a command, flag, alias or env var; changing a defaul
 
 ## 2. HTTP API of the cockpit server (`packages/cezar/src/server/server.ts`)
 
+- Factory feature actions (additive): `POST /api/v1/runs/:id/pr` accepts optional
+  `baseBranch: 'main'` and `expectedHeadSha`. A pinned request refuses a dirty or
+  changed task version and publishes only that SHA; omitted fields preserve the
+  existing removed-worktree refusal. A pinned completed task can publish its saved
+  branch when the worktree is gone, without altering the main checkout. It preserves
+  existing autosave and configured-base behavior. `POST /api/v1/github/prs/:number/merge`
+  accepts optional `expectedBaseRef`, rechecked against fresh forge state in addition
+  to the existing head guard. A changed target answers 409 with `code: 'stale-base'`.
+
 **Every route lives under `/api/v1`.** The unversioned `/api/*` surface was REMOVED (see the breaking entry in CHANGELOG.md): the paths below are the real URLs; the project-scoped ones also answer at `/api/v1/p/<projectId>/<path>`. A future `v2` mounts beside `v1` rather than editing these paths.
 
 Consumed by the bundled React cockpit (`packages/cezar/web/dist`, shipped in lockstep — low risk) and by anyone scripting `localhost:4321`. Saved bookmarklets do NOT call the API — since GitHub's CSP blocked cross-origin probes they only open a page URL (`packages/web/src/lib/bookmarklet.ts`), which is why removing the unversioned surface did not break them.

@@ -1,5 +1,5 @@
 import { trackerReadScope, resolveApiUrl, workspaceBrandingLogoResponseSchema } from '@open-mercato/cezar-api-client'
-import type { FeaturePreviewResponse } from '@open-mercato/cezar-api-client'
+import type { FeaturePreviewResponse, CreatePrRequest, GithubMergeRequest } from '@open-mercato/cezar-api-client'
 import type { TrackerAutomationOptions } from '@open-mercato/cezar-api-client'
 import { trackerWatchHandleSchema, trackerWatchSnapshotSchema, type TrackerWatchInput } from "@open-mercato/cezar-api-client"
 import type {
@@ -1145,7 +1145,7 @@ export async function getGithubPrMergeState(
 
 export async function mergeGithubPr(
   number: number,
-  input: { method: GithubMergeMethod; expectedHeadSha: string; overrideRules?: boolean },
+  input: GithubMergeRequest,
 ): Promise<GithubMergeResponse> {
   return unwrap(
     await cez.api.v1.p[':projectId'].github.prs[':number'].merge.$post({
@@ -1588,7 +1588,7 @@ export async function continueProjectRun(
  *  the PR badge. Draft unless `draft: false` — the review gate's Draft PR omits it, the run
  *  header's Create PR asks for a ready one. On 409 the ApiError's `manual` carries the
  *  `git merge <branch>` fallback to show copyable. */
-export async function createRunPr(id: string, opts: { draft?: boolean } = {}): Promise<CreatePrResponse> {
+export async function createRunPr(id: string, opts: CreatePrRequest = {}): Promise<CreatePrResponse> {
   return unwrap(
     await cez.api.v1.p[':projectId'].runs[':id'].pr.$post({
       param: { projectId: queryScope(), id: encodeURIComponent(id) },

@@ -1,5 +1,5 @@
 import { projectTriggerSchema } from '@open-mercato/cezar-contract';
-import { featurePreviewParamsSchema } from '@open-mercato/cezar-contract';
+import { featurePreviewParamsSchema, createPrRequestSchema, githubMergeRequestSchema } from '@open-mercato/cezar-contract';
 import { featurePreview } from './feature-preview.ts';
 import {
   trackerWatchInputSchema, trackerWatchParamsSchema, trackerWatchQuerySchema,
@@ -900,7 +900,7 @@ const patchRunSchema = z.object({
 // `POST /runs/:id/pr`: `draft` defaults to true — a bodyless POST still opens the draft PR every
 // caller got before the flag existed (the review gate's Draft PR); the run header's Create PR asks
 // for a ready-for-review one with `draft: false`.
-const createPrSchema = z.object({ draft: z.boolean().optional() });
+const createPrSchema = createPrRequestSchema;
 
 // Session commit (redesign R5 — §"Git/session API additions").
 const gitCommitSchema = z.object({
@@ -5019,6 +5019,7 @@ export function createApp(deps: ServerDeps) {
       const run = store.getRun(id);
       if (!run) return c.json({ error: 'not found' }, 404);
       if (manager.isActive(id)) return c.json({ error: 'run is still active — wait for the review gate' }, 409);
+      if (c.req.valid('json').expectedHeadSha && run.status !== 'done') return c.json({ error: 'Finish the task before publishing its selected version.' }, 409);
       // A pull-request head run's branch holds the whole foreign PR under this run's changes: a
       // draft PR from it into the default base would re-propose that PR (spec
       // 2026-10-06-agentic-e2e-checks Phase 3). Refused until publishing back is designed.
@@ -5028,7 +5029,7 @@ export function createApp(deps: ServerDeps) {
           409,
         );
       }
-      if (!run.worktreePath || !existsSync(run.worktreePath) || !run.branch) {
+      if (!run.branch || ((!run.worktreePath || !existsSync(run.worktreePath)) && !c.req.valid('json').expectedHeadSha)) {
         return c.json(
           {
             error: 'no worktree/branch to publish — this task ran in the repo working tree',
@@ -5042,6 +5043,8 @@ export function createApp(deps: ServerDeps) {
         handoffText: readHandoff(dataDir, id),
         summary: readRunDeliverySummary(dataDir, store, id),
         draft,
+        ...(c.req.valid('json').baseBranch ? { baseBranch: c.req.valid('json').baseBranch } : {}),
+        ...(c.req.valid('json').expectedHeadSha ? { expectedHeadSha: c.req.valid('json').expectedHeadSha } : {}),
       });
       if (!outcome.ok) {
         return c.json({ error: outcome.error, manual: `git merge ${run.branch}` }, 409);
@@ -6205,11 +6208,7 @@ export function createApp(deps: ServerDeps) {
     kind: z.enum(['issue', 'pr']),
     number: z.coerce.number().int().positive(),
   });
-  const mergeBodySchema = z.object({
-    method: z.enum(['merge', 'squash', 'rebase']),
-    expectedHeadSha: z.string().regex(/^[0-9a-f]{40}$/),
-    overrideRules: z.boolean().optional().default(false),
-  }).strict();
+  const mergeBodySchema = githubMergeRequestSchema;
 
   // ---- chained family: repo / git (project-scoped) ----
   const repoRoutes = new Hono<ProjectApiEnv>()

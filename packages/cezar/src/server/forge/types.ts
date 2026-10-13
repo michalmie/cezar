@@ -218,6 +218,7 @@ export type ForgePrMergeStateResult =
 export interface ForgeMergeInput {
   method: ForgeMergeMethod;
   expectedHeadSha: string;
+  expectedBaseRef?: string;
   overrideRules?: boolean;
 }
 
@@ -275,6 +276,8 @@ export interface DraftPrInput {
   summary?: string;
   /** Open it as a draft. Absent = draft — what every caller got before this flag existed. */
   draft?: boolean;
+  baseBranch?: 'main';
+  expectedHeadSha?: string;
 }
 
 /** Purpose-specific creation feed; independent of open lists and relevance search. */

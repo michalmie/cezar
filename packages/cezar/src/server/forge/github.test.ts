@@ -3261,6 +3261,22 @@ describe('fetchPrMergeState and an unreadable statusCheckRollup (#969)', () => {
     expect(calls).toContain('pr view 353 --json statusCheckRollup');
   });
 
+  it('reads the same guarded merge state through GraphQL when an older gh lacks JSON fields', async () => {
+    const calls = routeGh({
+      core: () => { throw new Error('Unknown JSON field: "headRefOid"'); },
+      aggregate: () => ({ data: { repository: { pullRequest: corePr } } }),
+      detail: () => ({ statusCheckRollup: [] }),
+      protection: () => [],
+    });
+    const out = await fetchPrMergeState('/repo/older-gh', repoRef, 353, true);
+    expect(out.available).toBe(true);
+    if (!out.available) throw new Error(out.reason);
+    expect(out.mergeState).toMatchObject({ headSha: 'a'.repeat(40), baseRef: 'main', canMerge: true, checksTier: 'detailed' });
+    const graphql = calls.find(call => call.startsWith('api graphql'));
+    expect(graphql).toContain('headRefOid');
+    expect(graphql).not.toContain('statusCheckRollup');
+  });
+
   it('keeps mergeable, mergeStateStatus and reviewDecision when the rollup detail is unreadable', async () => {
     // The fine-grained-PAT shape: detail exits 1 with empty stdout, the aggregate state is readable.
     routeGh({ aggregate: () => aggregate('SUCCESS') });

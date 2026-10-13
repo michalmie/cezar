@@ -35,4 +35,13 @@ describe('PR publishing delivery report', () => {
     expect(response.status).toBe(201);
     expect(createDraftPr).toHaveBeenCalledWith(expect.objectContaining({ summary: 'Implemented price recording and display.\n\n73 tests passed.' }));
   });
+  it('allows the selected completed commit when its worktree was removed, preserving the default refusal', async () => {
+    const run = store.createRun({ title: 'Feature', task: 'Feature', workflow: 'quick-task', steps: [] });
+    store.updateRun(run.id, { status: 'done', worktreePath: join(root, 'removed'), branch: 'cez/task' });
+    const app = createApp({ repoRoot: root, store, manager: { isActive: () => false } as unknown as RunManager, version: 'test' });
+    expect((await apiRequest(app, `/api/v1/runs/${run.id}/pr`, { method: 'POST' })).status).toBe(400);
+    const response = await apiRequest(app, `/api/v1/runs/${run.id}/pr`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ draft: false, baseBranch: 'main', expectedHeadSha: 'a'.repeat(40) }) });
+    expect(response.status).toBe(201);
+    expect(createDraftPr).toHaveBeenCalledWith(expect.objectContaining({ baseBranch: 'main', expectedHeadSha: 'a'.repeat(40) }));
+  });
 });

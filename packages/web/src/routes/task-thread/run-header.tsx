@@ -204,7 +204,6 @@ function RunHeaderView({
             <span className="ml-auto flex shrink-0 items-center gap-2.5">
               {/* The run's state, top right, beside the git button it decides. */}
               <RunStatus attention={attention} queuePosition={queuePosition} />
-              <FeaturePreviewButton run={run} />
               {/* Phone-width only: above `md` the meta row never collapses, so a control to expand
                   it would be a permanently disabled-looking chevron next to always-visible content. */}
               <Button
@@ -226,6 +225,8 @@ function RunHeaderView({
               <GitStepAndKebab run={run} actions={actions} showRunControls={!composerOwnsRunControls} />
             </span>
           </div>
+
+          <FeaturePreviewButton run={run} />
 
           {/* #765: workflow, branch, tracker refs, diff, tokens and cost wrap across several rows on
               a phone. `hidden` rather than a visual-only class so the collapsed rows leave the

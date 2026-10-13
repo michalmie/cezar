@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 import { REFERENCE_STATUS_MAX } from '@open-mercato/cezar-contract';
@@ -2618,7 +2619,8 @@ const PUSH_TIMEOUT_MS = 60_000;
 
 export async function createDraftPr(input: DraftPrInput): Promise<DraftPrOutcome> {
   const { run } = input;
-  const worktree = run.worktreePath;
+  const snapshotOnly = Boolean(input.expectedHeadSha && (!run.worktreePath || !existsSync(run.worktreePath)));
+  const worktree = snapshotOnly ? input.repoRoot : run.worktreePath;
   const branch = run.branch;
   if (!worktree || !branch) {
     return { ok: false, error: 'this task has no worktree/branch to publish' };
@@ -2629,7 +2631,25 @@ export async function createDraftPr(input: DraftPrInput): Promise<DraftPrOutcome
   // no later autosave to pick the work up, so a refusal (conflicted tree) or a
   // failed commit has to stop the publish instead of silently opening a PR from
   // a branch that is missing the run's final state.
-  const saved = await autosaveCommit(worktree, 'pre-PR');
+  if (input.expectedHeadSha) {
+    if (snapshotOnly) {
+      const savedHead = await execTool(['rev-parse', `refs/heads/${branch}^{commit}`], worktree, 'git');
+      if (!savedHead.ok || savedHead.stdout.trim() !== input.expectedHeadSha) {
+        return { ok: false, error: 'The saved task branch changed or is unavailable. Review the task before publishing.' };
+      }
+    } else {
+      const [head, status, currentBranch] = await Promise.all([
+        execTool(['rev-parse', 'HEAD'], worktree, 'git'),
+        execTool(['status', '--porcelain'], worktree, 'git'),
+        execTool(['branch', '--show-current'], worktree, 'git'),
+      ]);
+      if (!head.ok || !status.ok || !currentBranch.ok || head.stdout.trim() !== input.expectedHeadSha
+        || status.stdout.trim() || currentBranch.stdout.trim() !== branch) {
+        return { ok: false, error: 'The task version changed or has uncommitted changes. Review and commit it before publishing.' };
+      }
+    }
+  }
+  const saved = input.expectedHeadSha ? 'unchanged' : await autosaveCommit(worktree, 'pre-PR');
   if (saved === 'refused') {
     return {
       ok: false,
@@ -2651,17 +2671,18 @@ export async function createDraftPr(input: DraftPrInput): Promise<DraftPrOutcome
     return { ok: false, error: 'no git remote — add one (git remote add origin <url>) or merge the branch locally' };
   }
 
-  const push = await execTool(['push', '-u', 'origin', branch], worktree, 'git', PUSH_TIMEOUT_MS);
+  const push = await execTool(['push', '-u', 'origin', input.expectedHeadSha ? `${input.expectedHeadSha}:refs/heads/${branch}` : branch], worktree, 'git', PUSH_TIMEOUT_MS);
   if (!push.ok) {
     return { ok: false, error: `git push failed — ${tail(push.stderr) || 'unknown error'}` };
   }
+  if (input.expectedHeadSha) await execTool(['branch', '--set-upstream-to', `origin/${branch}`, branch], worktree, 'git');
 
   const body = buildPrBody(input.handoffText, run.task, input.summary);
   // Target the branch the worktree forked from (config `baseBranch`) — without
   // --base, gh aims at the repo default (main) even when work started on
   // develop. `origin/x` normalizes to `x`; a raw sha (detached-HEAD fork
   // point) can't be a PR base, so gh falls back to the default branch.
-  const prBase = run.baseBranch?.replace(/^origin\//, '');
+  const prBase = (input.baseBranch ?? run.baseBranch)?.replace(/^origin\//, '');
   const baseArgs = prBase && !/^[0-9a-f]{7,40}$/i.test(prBase) ? ['--base', prBase] : [];
   const pr = await execTool(
     ['pr', 'create', ...(input.draft === false ? [] : ['--draft']), '--head', branch, ...baseArgs, '--title', run.title, '--body', body],
@@ -3095,10 +3116,19 @@ export async function fetchPrMergeState(
     // along here, and on a token that cannot read its contexts `gh` exits 1 with empty stdout,
     // taking `mergeable`, `mergeStateStatus` and `reviewDecision` down with it even though the same
     // token reads all three. The check detail now has its own call, and its own way to degrade.
-    const prOut = await gh(repoRoot, [
-      'pr', 'view', String(number), '--json',
-      'number,title,url,state,isDraft,headRefName,baseRefName,headRefOid,mergeable,mergeStateStatus,reviewDecision',
-    ]);
+    let prOut: string;
+    try {
+      prOut = await gh(repoRoot, [
+        'pr', 'view', String(number), '--json',
+        'number,title,url,state,isDraft,headRefName,baseRefName,headRefOid,mergeable,mergeStateStatus,reviewDecision',
+      ]);
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes('Unknown JSON field')) throw error;
+      const query = 'query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){number title url state isDraft headRefName baseRefName headRefOid mergeable mergeStateStatus reviewDecision}}}';
+      const output = await gh(repoRoot, ['api', 'graphql', '-f', `query=${query}`, '-f', `owner=${repoRef.owner}`, '-f', `repo=${repoRef.repo}`, '-F', `number=${number}`]);
+      const response = z.object({ data: z.object({ repository: z.object({ pullRequest: mergePrSchema }) }) }).parse(JSON.parse(output));
+      prOut = JSON.stringify(response.data.repository.pullRequest);
+    }
     const parsedPr = mergePrSchema.parse(JSON.parse(prOut));
     const [policyOut, requiredChecks, checks] = await Promise.all([
       gh(repoRoot, ['api', `repos/${repoRef.owner}/${repoRef.repo}`]),
@@ -3154,6 +3184,9 @@ async function mergePullRequest(
     const fresh = await fetchPrMergeState(repoRoot, repoRef, number, true);
     if (!fresh.available) return { merged: false, status: 502, error: fresh.reason };
     const current = fresh.mergeState;
+    if (input.expectedBaseRef && current.baseRef !== input.expectedBaseRef) {
+      return { merged: false, status: 409, error: 'The pull request target changed. Review its target branch before merging.', code: 'stale-base', current };
+    }
     if (current.headSha !== input.expectedHeadSha) {
       return { merged: false, status: 409, error: 'The pull request head changed. Review the new commits before merging.', code: 'stale-head', current };
     }

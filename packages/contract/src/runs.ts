@@ -592,6 +592,12 @@ export const createPrResponseSchema = z.object({
   dryRun: z.boolean(),
 });
 export type CreatePrResponse = z.infer<typeof createPrResponseSchema>;
+export const createPrRequestSchema = z.object({
+  draft: z.boolean().optional(),
+  baseBranch: z.literal('main').optional(),
+  expectedHeadSha: z.string().regex(/^[0-9a-f]{40}$/).optional(),
+});
+export type CreatePrRequest = z.infer<typeof createPrRequestSchema>;
 
 /**
  * `POST /runs/:id/messages` — one of three shapes (#472), by how far the run has got:

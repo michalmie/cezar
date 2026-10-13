@@ -102,6 +102,14 @@ describe('createDraftPr pre-PR autosave (#471 follow-up)', () => {
     expect(outcome.ok).toBe(true);
     expect(warn).not.toHaveBeenCalled();
   });
+  it('refuses unreviewed changes instead of autosaving when publishing a selected commit', async () => {
+    await git(['checkout', '-q', '-b', 'cez/abc123']);
+    const head = (await git(['rev-parse', 'HEAD'])).stdout.trim();
+    writeFileSync(join(repo, 'a.txt'), 'unreviewed change\n');
+    const outcome = await createDraftPr({ ...input(), expectedHeadSha: head });
+    expect(outcome.ok).toBe(false);
+    expect((await git(['rev-parse', 'HEAD'])).stdout.trim()).toBe(head);
+  });
 });
 
 /** The `draft` flag reaches `gh pr create`: absent keeps the draft every caller had before it
@@ -166,5 +174,22 @@ describe('createDraftPr draft flag', () => {
     expect(outcome.ok).toBe(true);
     expect(readFileSync(join(bin, 'argv'), 'utf8')).toContain(`--body\n## Summary\n\n${summary}`);
     expect(readFileSync(join(bin, 'argv'), 'utf8')).not.toContain('do the thing');
+  });
+  it('publishes the selected commit to an explicit main PR even if the task forked from another base', async () => {
+    const head = (await git(['rev-parse', 'HEAD'])).stdout.trim();
+    const outcome = await createDraftPr({ ...input(false), run: { ...input(false).run, baseBranch: 'develop' }, baseBranch: 'main', expectedHeadSha: head });
+    expect(outcome.ok).toBe(true);
+    const args = argv(); expect(args[args.indexOf('--base') + 1]).toBe('main');
+    expect((await run('git', ['--git-dir', remote, 'rev-parse', 'refs/heads/cez/abc123'])).stdout.trim()).toBe(head);
+  });
+  it('publishes a saved task branch after its worktree is removed without touching a dirty main checkout', async () => {
+    const head = (await git(['rev-parse', 'HEAD'])).stdout.trim();
+    await git(['checkout', '-q', 'main']);
+    writeFileSync(join(repo, 'a.txt'), 'local-only changes\n');
+    const outcome = await createDraftPr({ ...input(false), run: { ...input(false).run, worktreePath: join(repo, 'removed-worktree') }, baseBranch: 'main', expectedHeadSha: head });
+    expect(outcome.ok).toBe(true);
+    expect(readFileSync(join(repo, 'a.txt'), 'utf8')).toBe('local-only changes\n');
+    expect((await git(['branch', '--show-current'])).stdout.trim()).toBe('main');
+    expect((await run('git', ['--git-dir', remote, 'rev-parse', 'refs/heads/cez/abc123'])).stdout.trim()).toBe(head);
   });
 });
