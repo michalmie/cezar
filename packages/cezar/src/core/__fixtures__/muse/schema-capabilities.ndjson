@@ -1,0 +1,14 @@
+{"method": "turn/started", "params": {"sessionId": "schema-session", "turnId": "schema-turn"}}
+{"method": "session/todoListChanged", "params": {"sessionId": "schema-session", "items": [{"text": "Integrate Muse", "status": "inProgress"}]}}
+{"method": "item/started", "params": {"sessionId": "schema-session", "item": {"itemId": "think", "kind": "reasoning", "status": "inProgress", "revision": 1, "summary": []}}}
+{"method": "item/delta", "params": {"sessionId": "schema-session", "itemId": "think", "field": "summary.0", "delta": "Check the protocol before coding."}}
+{"method": "item/delta", "params": {"sessionId": "schema-session", "itemId": "think", "field": "summary.1", "delta": "Then verify the lifecycle."}}
+{"method": "item/completed", "params": {"sessionId": "schema-session", "item": {"itemId": "think", "kind": "reasoning", "status": "completed", "revision": 2, "summary": ["Check the protocol before coding.", "Then verify the lifecycle."]}}}
+{"method": "item/started", "params": {"sessionId": "schema-session", "item": {"itemId": "edit", "kind": "toolCall", "status": "inProgress", "tool": "apply_patch", "args": "{\"patch\": \"*** Begin Patch\\n*** Update File: src/a.ts\\n@@\\n-old\\n+new\\n*** End Patch\"}", "visibleOutput": "Applied patch", "revision": 1}}}
+{"method": "item/completed", "params": {"sessionId": "schema-session", "item": {"itemId": "edit", "kind": "toolCall", "status": "completed", "tool": "apply_patch", "args": "{\"patch\": \"*** Begin Patch\\n*** Update File: src/a.ts\\n@@\\n-old\\n+new\\n*** End Patch\"}", "visibleOutput": "Applied patch", "revision": 2}}}
+{"method": "item/started", "params": {"sessionId": "schema-session", "item": {"itemId": "fail", "kind": "toolCall", "status": "inProgress", "tool": "exec_command", "args": "{\"command\": \"npm test\"}", "exitCode": 1, "visibleOutput": "A test failed", "revision": 1}}}
+{"method": "item/completed", "params": {"sessionId": "schema-session", "item": {"itemId": "fail", "kind": "toolCall", "status": "failed", "tool": "exec_command", "args": "{\"command\": \"npm test\"}", "exitCode": 1, "visibleOutput": "A test failed", "revision": 2}}}
+{"method": "item/started", "params": {"sessionId": "schema-session", "item": {"itemId": "child", "kind": "subagent", "status": "inProgress", "fallbackText": "Review the implementation", "revision": 1}}}
+{"method": "item/completed", "params": {"sessionId": "schema-session", "item": {"itemId": "child", "kind": "subagent", "status": "completed", "fallbackText": "Review the implementation", "revision": 2}}}
+{"method": "session/tokenUsage", "params": {"sessionId": "schema-session", "turnId": "schema-turn", "usage": {"inputTokens": 120, "outputTokens": 40, "cachedTokens": 20, "reasoningTokens": 10}}}
+{"method": "turn/completed", "params": {"sessionId": "schema-session", "turnId": "schema-turn", "terminal": "completed"}}

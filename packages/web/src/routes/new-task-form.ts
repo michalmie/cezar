@@ -56,6 +56,7 @@ export const RUNNERS: readonly RunnerOption[] = [
   { id: 'cursor', label: 'cursor', desc: 'Cursor Agent CLI' },
   { id: 'pi', label: 'pi', desc: 'pi CLI (provider/model)' },
   { id: 'copilot', label: 'copilot', desc: 'GitHub Copilot CLI (ACP)' },
+  { id: 'muse', label: 'muse', desc: 'Meta Muse Code' },
 ]
 
 export interface ModelPreset {
@@ -105,6 +106,7 @@ export const MODELS_BY_RUNNER: Record<Runner, readonly ModelPreset[]> = {
   // catalog is fetched from GitHub per account, so nothing dated can be listed truthfully. `auto`
   // is Copilot's own documented value for "let Copilot pick" (`copilot --help`), and the field
   // stays free text for anything the account is entitled to.
+  muse: [{ id: '', label: 'auto', desc: 'Use your Muse Code default model' }],
   copilot: [
     { id: '', label: 'auto', desc: 'Let Copilot pick the model' },
   ],
@@ -200,6 +202,7 @@ const DISCOVERY_RUNNER_LABEL: Record<ModelDiscoveryRunner, string> = {
   codex: 'Codex',
   opencode: 'OpenCode',
   junie: 'Junie',
+  muse: 'Muse Code',
   cursor: 'Cursor',
 }
 

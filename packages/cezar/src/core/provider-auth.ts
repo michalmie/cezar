@@ -7,7 +7,7 @@ import { resolveClaudeBin } from './claude-bin.ts';
 import { quoteExecutable, withEnvPrefix } from './shell-env.ts';
 import { probeJunieAuthentication } from './junie-auth-probe.ts';
 
-export const PROVIDER_IDS = ['claude', 'codex', 'opencode', 'cursor', 'pi', 'junie', 'copilot'] as const;
+export const PROVIDER_IDS = ['claude', 'codex', 'opencode', 'cursor', 'pi', 'junie', 'copilot', 'muse'] as const;
 export type ProviderId = (typeof PROVIDER_IDS)[number];
 export type ProviderConnectionState =
   | 'connected'
@@ -380,7 +380,28 @@ const DESCRIPTORS: readonly ProviderDescriptor[] = [
     parse: parseCopilotStatus,
     stdin: copilotAcpProbeStdin,
   },
+  {
+    id: 'muse',
+    executable: () => process.env.CEZ_MUSE_BIN ?? 'muse',
+    statusArgs: ['usage', '--json'],
+    loginArgs: ['login'],
+    installHint: 'Install Muse Code from https://dev.meta.ai/docs/muse-code, then run muse login.',
+    parse: parseMuseStatus,
+  },
 ];
+
+export function parseMuseStatus(result: ProviderCommandResult): ProviderConnectionState | null {
+  if (result.exitCode !== 0 && /not logged in: run `muse login` first/i.test(result.stderr)) return 'disconnected';
+  try {
+    const value: unknown = JSON.parse(result.stdout);
+    if (!value || typeof value !== 'object') return null;
+    const row = value as Record<string, unknown>;
+    // usage is a read-only allowance request, never a billable model turn.
+    if (result.exitCode === 0 && (row.reason === 'api_key' || (row.allowance !== null && typeof row.allowance === 'object'))) return 'connected';
+    if (row.reason === 'not_logged_in') return 'disconnected';
+  } catch { /* malformed output is inconclusive */ }
+  return null;
+}
 
 function parseCursorStatus(result: ProviderCommandResult): ProviderConnectionState | null {
   // probe() already handles ENOENT / any other errorCode before calling parse() — result here

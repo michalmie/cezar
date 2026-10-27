@@ -1,0 +1,165 @@
+[
+  {
+    "type": "turn.started",
+    "turnId": "schema-turn"
+  },
+  {
+    "type": "plan.updated",
+    "entries": [
+      {
+        "content": "Integrate Muse",
+        "status": "in_progress"
+      }
+    ]
+  },
+  {
+    "type": "item.started",
+    "item": {
+      "kind": "reasoning",
+      "id": "think",
+      "text": ""
+    }
+  },
+  {
+    "type": "item.delta",
+    "itemId": "think",
+    "field": "reasoning",
+    "delta": "Check the protocol before coding."
+  },
+  {
+    "type": "item.delta",
+    "itemId": "think",
+    "field": "reasoning",
+    "delta": "\n\nThen verify the lifecycle."
+  },
+  {
+    "type": "item.completed",
+    "item": {
+      "kind": "reasoning",
+      "id": "think",
+      "text": "Check the protocol before coding.\n\nThen verify the lifecycle."
+    }
+  },
+  {
+    "type": "item.started",
+    "item": {
+      "kind": "tool",
+      "id": "edit",
+      "name": "apply_patch",
+      "toolKind": "edit",
+      "title": "Edit",
+      "status": "running",
+      "input": {
+        "patch": "*** Begin Patch\n*** Update File: src/a.ts\n@@\n-old\n+new\n*** End Patch"
+      },
+      "output": "Applied patch",
+      "diffs": [
+        {
+          "path": "src/a.ts",
+          "oldText": "",
+          "unified": "*** Update File: src/a.ts\n@@\n-old\n+new"
+        }
+      ]
+    }
+  },
+  {
+    "type": "item.completed",
+    "item": {
+      "kind": "tool",
+      "id": "edit",
+      "name": "apply_patch",
+      "toolKind": "edit",
+      "title": "Edit",
+      "status": "completed",
+      "input": {
+        "patch": "*** Begin Patch\n*** Update File: src/a.ts\n@@\n-old\n+new\n*** End Patch"
+      },
+      "output": "Applied patch",
+      "diffs": [
+        {
+          "path": "src/a.ts",
+          "oldText": "",
+          "unified": "*** Update File: src/a.ts\n@@\n-old\n+new"
+        }
+      ]
+    }
+  },
+  {
+    "type": "item.started",
+    "item": {
+      "kind": "tool",
+      "id": "fail",
+      "name": "exec_command",
+      "toolKind": "execute",
+      "title": "Ran npm test",
+      "status": "running",
+      "input": {
+        "command": "npm test"
+      },
+      "output": "A test failed",
+      "exitCode": 1
+    }
+  },
+  {
+    "type": "item.completed",
+    "item": {
+      "kind": "tool",
+      "id": "fail",
+      "name": "exec_command",
+      "toolKind": "execute",
+      "title": "Ran npm test",
+      "status": "failed",
+      "input": {
+        "command": "npm test"
+      },
+      "output": "A test failed",
+      "exitCode": 1
+    }
+  },
+  {
+    "type": "item.started",
+    "item": {
+      "kind": "tool",
+      "id": "child",
+      "name": "subagent",
+      "toolKind": "task",
+      "title": "subagent",
+      "status": "running"
+    }
+  },
+  {
+    "type": "item.completed",
+    "item": {
+      "kind": "tool",
+      "id": "child",
+      "name": "subagent",
+      "toolKind": "task",
+      "title": "subagent",
+      "status": "completed"
+    }
+  },
+  {
+    "type": "usage.updated",
+    "usage": {
+      "input": 120,
+      "output": 40,
+      "total": 160,
+      "cacheRead": 20,
+      "cacheWrite": 0,
+      "reasoning": 10
+    }
+  },
+  {
+    "type": "turn.completed",
+    "turnId": "schema-turn",
+    "stopReason": "end_turn",
+    "usage": {
+      "input": 120,
+      "output": 40,
+      "total": 160,
+      "cacheRead": 20,
+      "cacheWrite": 0,
+      "reasoning": 10
+    }
+  }
+]

@@ -35,7 +35,7 @@ id — that is the whole point of the seam.
 ### Identity
 
 ```ts
-const RUNNER_IDS = ['claude', 'codex', 'opencode', 'cursor', 'pi', 'junie'] as const;  // the source of truth
+const RUNNER_IDS = ['claude', 'codex', 'opencode', 'cursor', 'pi', 'junie', 'copilot', 'muse'] as const;  // the source of truth
 type RunnerId     = (typeof RUNNER_IDS)[number];                             // user-selectable
 type AgentBackend = RunnerId | 'claude-cli';                                 // + legacy id, still parses
 ```
@@ -540,3 +540,22 @@ breaking change requiring the documented deprecation path.
 - `BACKWARD_COMPATIBILITY.md` — §7 (this protocol) and §2/§3 (SSE names, NDJSON).
 - `.ai/analysis/cockpit-ui-redesign/agent-event-protocols.md` — the deep design record (§7, §7.1).
 - `.ai/specs/2026-07-14-cockpit-ui-redesign.md` — the spec (protocol v2, parity requirement).
+
+### Muse Code MSP
+
+`muse` uses a persistent `muse serve` host speaking MSP v1 over JSON-RPC/NDJSON.
+See `.ai/specs/2026-10-27-muse-runner.md` and `core/__fixtures__/muse/README.md`
+for the verified 1.4.13 wire and fixture provenance. MSP shares the generic
+JSON-RPC transport with ACP runners, but uses its own methods and mapper.
+
+`session/start|resume` opens the native session; `turn/start` queues a turn.
+`item/started|delta|updated|completed` drives messages, reasoning summaries and
+tools; `session/todoListChanged` replaces plans. Each `session/tokenUsage`
+contains one model completion, summed per turn and session; terminal usage,
+when present, is authoritative. `turn/foregroundCompleted` is nonterminal.
+Server `approval/request` and `userInput/request` require an empty receipt plus
+separate decision/cancel commands, deduplicated against notification twins.
+Muse supplies its own UUIDv7 session id instead of Cezar's provisional v4 id.
+The native sandbox stays on; unattended approvals are `allowAll`. Native item
+shapes have no parent-item field, so subagents render as task tools without
+invented nesting. Private MCP and extra account profiles are not advertised.
