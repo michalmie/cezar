@@ -7,6 +7,7 @@ import { RunStore } from '../runs/store.ts';
 import type { RunManager } from '../workflows/run.ts';
 import { createApp } from './server.ts';
 import { apiRequest } from './loopback-request.testkit.ts';
+import { RUNNER_IDS } from '../core/agent-runner.ts';
 
 /**
  * `GET/PUT /api/v1/config` (R6 Step 1.5 — Settings → Agents). The contract under
@@ -199,6 +200,26 @@ describe('the config API', () => {
     // Naming a real preset later simply wins over the override.
     await put({ defaultModels: { claude: 'sonnet' } });
     expect((await getBody()).defaultModels).toMatchObject({ claude: 'sonnet' });
+  });
+
+  it.each(RUNNER_IDS)('persists the selected default model for %s across config reads', async (runner) => {
+    const response = await put({ defaultModels: { [runner]: 'selected-model' }, defaultModelsAuto: { [runner]: false } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ defaultModels: { [runner]: 'selected-model' } });
+    expect(rawFile().defaultModels).toEqual({ [runner]: 'selected-model' });
+    expect(await getBody()).toMatchObject({ defaultModels: { [runner]: 'selected-model' } });
+  });
+
+  it.each(RUNNER_IDS)('persists Auto and permits a later model selection for %s', async (runner) => {
+    await put({ defaultModels: { [runner]: 'first-model' } });
+    const response = await put({ defaultModels: { [runner]: null }, defaultModelsAuto: { [runner]: true } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ defaultModels: { [runner]: '' } });
+    expect(rawFile().defaultModelsAuto).toEqual({ [runner]: true });
+    expect(await getBody()).toMatchObject({ defaultModels: { [runner]: '' } });
+    await put({ defaultModels: { [runner]: 'second-model' }, defaultModelsAuto: { [runner]: false } });
+    expect(rawFile().defaultModelsAuto).toBeUndefined();
+    expect(await getBody()).toMatchObject({ defaultModels: { [runner]: 'second-model' } });
   });
 
   it('PUT defaultModelsAuto merges per runner and stores only a real opinion (#906)', async () => {
