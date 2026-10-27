@@ -87,13 +87,13 @@ import { resolveCapabilities } from '../server/capabilities.ts';
 import { composeDispatchPrompt } from '../dispatch/prompts.ts';
 import {
   appendLedger,
+  ensureTreeDir,
   inboxDigest,
   inboxName,
   listInbox,
   notesSuggestions,
   seedNotes,
   taskPaths,
-  treeDir,
   treeEnvelopeLines,
   writeBrief,
   writeInboxMessage,
@@ -1325,6 +1325,11 @@ export class RunManager {
     // The same ONE gate the dispatch prompt uses, so an agent is never told about a CLI whose
     // address it was not given (and never given an address it was not told about).
     const apiUrl = this.dispatchReachable() ? process.env.CEZ_API_URL : undefined;
+    // The tree directory, ensured to EXIST on the last common path before a spawn: strict
+    // backends (muse `workspaceRoots`) refuse to start when a granted directory is missing, and
+    // the tree dir of a dispatch-mode root is otherwise only created lazily at first dispatch.
+    // Uncreatable → omitted, never failed (see `ensureTreeDir`).
+    const treeDirPath = dispatch ? ensureTreeDir(this.dataDir, dispatch.rootRunId) : undefined;
     return {
       CEZ_HANDOFF_FILE: handoffPath(this.dataDir, runId),
       CEZ_TASK_ID: runId,
@@ -1339,7 +1344,7 @@ export class RunManager {
       // `cez` that happens to be on its PATH without the command (observed on the first live run).
       ...(apiUrl && process.env.CEZ_BIN ? { CEZ_BIN: process.env.CEZ_BIN } : {}),
       // The tree directory — brief, notes, inbox — for a run in a dispatch tree only.
-      ...(dispatch ? { CEZ_TREE_DIR: treeDir(this.dataDir, dispatch.rootRunId) } : {}),
+      ...(treeDirPath ? { CEZ_TREE_DIR: treeDirPath } : {}),
     };
   }
 
