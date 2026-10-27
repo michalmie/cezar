@@ -48,6 +48,8 @@ createInterface({ input: process.stdin }).on('line', line => {
     turnQueue = turnQueue.then(async () => {
     notify('turn/started', { turnId });
     const text = r.params.input.filter(p => p.type === 'text').map(p => p.text).join('\n');
+    // Echo the task without replaying Cezar's own orchestration markers into the cockpit.
+    const replyText = process.env.CEZ_TASK_ID ? text.split('\n\n---\n\n').at(-1) : text;
     if (text.includes('MOCK_HANG')) return new Promise(() => {});
     if (text.includes('MOCK_SLOW')) await new Promise(resolve => setTimeout(resolve, 500));
     if (text.includes('MOCK_FAIL')) { notify('turn/completed', { turnId, terminal: 'failed', error: { message: 'Muse test failure' } }); return; }
@@ -60,8 +62,8 @@ createInterface({ input: process.stdin }).on('line', line => {
     }
     const item = { itemId: randomUUID(), kind: 'agentMessage', status: 'inProgress', revision: 1, text: '' };
     notify('item/started', { item });
-    notify('item/delta', { itemId: item.itemId, field: 'text', delta: `Muse: ${text}` });
-    notify('item/completed', { item: { ...item, status: 'completed', revision: 2, messagePhase: 'finalAnswer', text: `Muse: ${text}` } });
+    notify('item/delta', { itemId: item.itemId, field: 'text', delta: `Muse: ${replyText}` });
+    notify('item/completed', { item: { ...item, status: 'completed', revision: 2, messagePhase: 'finalAnswer', text: `Muse: ${replyText}` } });
     notify('session/tokenUsage', { turnId, usage: { inputTokens: 11, outputTokens: 7, cachedTokens: 2, reasoningTokens: 1 } });
     notify('turn/completed', { turnId, terminal: 'completed' });
     });

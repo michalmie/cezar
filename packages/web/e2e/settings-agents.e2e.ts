@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { runnerSchema } from '@open-mercato/cezar-api-client'
 
 import { AgentBrowser, readTestEnv } from './agent-browser'
 
@@ -29,7 +30,7 @@ let baseUrl: string
 let previousConfig: string | null = null
 let modelsLocked = false
 
-const RUNNER_IDS = ['claude', 'codex', 'junie', 'opencode', 'pi', 'copilot'] as const
+const RUNNER_IDS = runnerSchema.options
 
 beforeAll(async () => {
   baseUrl = readTestEnv().baseUrl
@@ -109,10 +110,10 @@ describe('settings → agents against the live dry-run server', () => {
   it('per-runner model preset: select writes the runner key, others untouched', async ({ skip }) => {
     if (modelsLocked) skip('model selection is locked by CEZ_AGENT_MODELS_LOCKED')
     gotoAgents()
+    const before = await fetch(`${baseUrl}/api/v1/config`).then((response) => response.json()) as ConfigAnswer
     setSelect('[data-slot="agents-model"][data-runner="claude"]', 'opus')
     const config = await waitForConfig((c) => c.defaultModels.claude === 'opus')
-    expect(config.defaultModels.codex).toBeUndefined()
-    expect(config.defaultModels.opencode).toBeUndefined()
+    expect({ ...config.defaultModels, claude: undefined }).toEqual({ ...before.defaultModels, claude: undefined })
   })
 
   it('system prompt: explicit save persists the trimmed text', async () => {

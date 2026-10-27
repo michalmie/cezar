@@ -63,6 +63,10 @@ describe('MuseRunner over the offline MSP peer', () => {
     expect(turns).toBe(2);
     expect(session.sendMessage([{ type: 'text', text: 'closed' }])).toBe(false);
   });
+  it('does not echo Cezar control-marker instructions as mock agent output', async () => {
+    const result = await new MuseRunner({ bin }).run({ ...spec, systemPrompt: 'Example: CEZ:ASK <json>', env: { CEZ_TASK_ID: 'muse-test' } });
+    expect(result.text).toBe('Muse: Hello');
+  });
   it('resumes the requested native session with the selected model', async () => {
     const first = await new MuseRunner({ bin }).run(spec);
     const next = await new MuseRunner({ bin }).run({ ...spec, resume: true, sessionId: first.sessionId, model: 'muse-test' });
