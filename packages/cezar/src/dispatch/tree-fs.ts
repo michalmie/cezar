@@ -82,6 +82,27 @@ function writeText(path: string, text: string): string {
   return path;
 }
 
+/**
+ * Ensure the tree directory itself exists, creating nothing else: no brief, no order, no notes —
+ * those keep their "written at first dispatch" semantics. Called on the last common path before a
+ * spawn (`agentEnv`), so every backend is granted a directory that is there: strict ones (muse
+ * `workspaceRoots`) refuse to START when a granted directory is missing, and without this the tree
+ * dir of a dispatch-mode root does not exist until its first dispatch.
+ *
+ * Best-effort, like every tree write: `undefined` when the directory cannot be created (or is
+ * blocked by a non-directory), and the caller omits `CEZ_TREE_DIR` — a run with no file channel
+ * rather than a run that cannot start.
+ */
+export function ensureTreeDir(dataDir: string, rootRunId: string): string | undefined {
+  const dir = treeDir(dataDir, rootRunId);
+  try {
+    mkdirSync(dir, { recursive: true });
+    return statSync(dir).isDirectory() ? dir : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** `brief.md` — written once, at the root's FIRST dispatch, from the root's own task text: the
  *  objective every task in the tree is accountable to, in the user's words. */
 export function writeBrief(dataDir: string, rootRunId: string, objective: string): string {
