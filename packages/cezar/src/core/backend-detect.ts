@@ -6,7 +6,7 @@ import { resolveClaudeBin } from './claude-bin.ts';
 const exec = promisify(execFile);
 
 export interface BackendCheck {
-  name: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'junie' | 'copilot' | 'gh' | 'git';
+  name: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'junie' | 'copilot' | 'muse' | 'gh' | 'git';
   available: boolean;
   version?: string;
   hint?: string;
@@ -28,6 +28,7 @@ export async function detectEnvironment(): Promise<BackendCheck[]> {
     probePi(),
     probeJunie(),
     probeCopilot(),
+    probeMuse(),
     probeGh(),
     probeGit(),
   ]);
@@ -212,6 +213,18 @@ async function probeCopilot(): Promise<BackendCheck> {
       available: false,
       hint: 'optional: install GitHub Copilot CLI (`npm i -g @github/copilot`) and run `copilot login` to use the copilot runner',
     };
+  }
+}
+
+async function probeMuse(): Promise<BackendCheck> {
+  if (process.env.CEZ_DRY_RUN === '1') return { name: 'muse', available: true, version: 'mock (CEZ_DRY_RUN=1)' };
+  const bin = process.env.CEZ_MUSE_BIN ?? 'muse';
+  try {
+    const { stdout } = await exec(bin, ['--version'], { timeout: 10_000 });
+    if (!/^Muse Code \d+\.\d+/i.test(stdout.trim())) return { name: 'muse', available: false, hint: 'The muse executable is not Meta Muse Code.' };
+    return { name: 'muse', available: true, version: stdout.trim(), hint: 'Run muse login if authentication is needed.' };
+  } catch {
+    return { name: 'muse', available: false, hint: 'Install Muse Code from https://dev.meta.ai/docs/muse-code, then run muse login.' };
   }
 }
 

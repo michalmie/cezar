@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CONFIG_FILES, findConfigFile, listConfigFiles, type AgentHomePaths } from './catalog.ts';
 
 const HOME: AgentHomePaths = {
+  muse: '/home/test/.config/muse',
   claude: '/home/u/.claude',
   codex: '/home/u/.codex',
   opencodeConfig: '/home/u/.config/opencode',

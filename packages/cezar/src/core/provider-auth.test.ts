@@ -30,6 +30,7 @@ import {
 import { probeJunieAuthentication } from './junie-auth-probe.ts';
 
 const connectedResults: Record<string, ProviderCommandResult> = {
+  muse: { stdout: '{"reason":"api_key","allowance":null}', stderr: '', exitCode: 0 },
   claude: { stdout: '{"loggedIn":true}', stderr: '', exitCode: 0 },
   codex: { stdout: 'Logged in using ChatGPT', stderr: '', exitCode: 0 },
   opencode: {
@@ -106,6 +107,7 @@ function resultFor(executable: string): ProviderCommandResult {
   if (executable.includes('codex')) return connectedResults.codex!;
   if (executable === 'agent' || executable.includes('cursor')) return connectedResults.cursor!;
   if (executable.includes('opencode')) return connectedResults.opencode!;
+  if (executable.includes('muse')) return connectedResults.muse!;
   if (executable.includes('copilot')) return connectedResults.copilot!;
   return connectedResults.pi!;
 }
@@ -661,6 +663,7 @@ describe('ProviderAuthService', () => {
         { provider: 'pi' },
         { provider: 'junie', status: 'connected' },
         { provider: 'copilot' },
+        { provider: 'muse' },
       ],
     });
   });
@@ -685,6 +688,7 @@ describe('ProviderAuthService', () => {
       { executable: 'agent', args: ['status', '--format', 'json'], timeoutMs: 10_000 },
       { executable: 'pi', args: ['--list-models'], timeoutMs: 10_000 },
       { executable: 'copilot', args: ['--acp'], timeoutMs: 10_000 },
+      { executable: 'muse', args: ['usage', '--json'], timeoutMs: 10_000 },
     ]);
     release();
     await expect(pending).resolves.toBeDefined();
@@ -1141,6 +1145,7 @@ describe('ProviderAuthService', () => {
         { provider: 'pi', status: 'connected' },
         { provider: 'junie', status: 'connected' },
         { provider: 'copilot', status: 'connected' },
+        { provider: 'muse', status: 'connected' },
       ],
     });
     expect(runCommand).not.toHaveBeenCalled();
@@ -1254,6 +1259,7 @@ describe('ProviderAuthService', () => {
         { provider: 'pi', status: 'connected' },
         { provider: 'junie', status: 'connected' },
         { provider: 'copilot', status: 'connected' },
+        { provider: 'muse', status: 'connected' },
       ],
     });
     expect(runCommand).not.toHaveBeenCalled();

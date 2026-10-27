@@ -1,0 +1,55 @@
+[
+  {
+    "type": "turn.started",
+    "turnId": "01a17e7f-5c61-7e34-ab27-8098a6ce9fe1"
+  },
+  {
+    "type": "item.started",
+    "item": {
+      "kind": "message",
+      "id": "e13a813c-ed0d-48d1-83d4-9a96dae68890",
+      "role": "assistant",
+      "text": ""
+    }
+  },
+  {
+    "type": "item.delta",
+    "itemId": "e13a813c-ed0d-48d1-83d4-9a96dae68890",
+    "field": "text",
+    "delta": "echo: Hello Cezar"
+  },
+  {
+    "type": "usage.updated",
+    "usage": {
+      "input": 0,
+      "output": 0,
+      "total": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "reasoning": 0
+    }
+  },
+  {
+    "type": "item.completed",
+    "item": {
+      "kind": "message",
+      "id": "e13a813c-ed0d-48d1-83d4-9a96dae68890",
+      "role": "assistant",
+      "text": "echo: Hello Cezar",
+      "phase": "final"
+    }
+  },
+  {
+    "type": "turn.completed",
+    "turnId": "01a17e7f-5c61-7e34-ab27-8098a6ce9fe1",
+    "stopReason": "end_turn",
+    "usage": {
+      "input": 0,
+      "output": 0,
+      "total": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "reasoning": 0
+    }
+  }
+]

@@ -28,6 +28,7 @@ export type ConfigTracked = 'tracked' | 'gitignored' | 'outside-repo';
 
 /** Resolved home directories per agent, injected so the catalog stays pure and testable. */
 export interface AgentHomePaths {
+  muse: string;
   /** `~/.claude` */
   claude: string;
   /** `$CODEX_HOME` or `~/.codex` */
