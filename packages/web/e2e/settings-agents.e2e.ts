@@ -122,6 +122,25 @@ describe('settings → agents against the live dry-run server', () => {
     await waitForConfig((c) => c.systemPrompt === 'Always add tests. (e2e)')
   })
 
+  it('Muse model selection and Auto survive a full page reload', async ({ skip }) => {
+    if (modelsLocked) skip('model selection is locked by CEZ_AGENT_MODELS_LOCKED')
+    const selector = '[data-slot="agents-model"][data-runner="muse"]'
+    gotoAgents()
+    browser.waitForFunction(`Array.from(document.querySelector('${selector}').options).some(option => option.value === 'muse-test')`)
+    setSelect(selector, 'muse-test')
+    await waitForConfig((config) => config.defaultModels.muse === 'muse-test')
+    gotoAgents()
+    browser.waitForFunction(`document.querySelector('${selector}').value === 'muse-test'`)
+    setSelect(selector, '')
+    await waitForConfig((config) => config.defaultModels.muse === '')
+    gotoAgents()
+    browser.waitForFunction(`document.querySelector('${selector}').value === ''`)
+    setSelect(selector, 'muse-test')
+    await waitForConfig((config) => config.defaultModels.muse === 'muse-test')
+    gotoAgents()
+    browser.waitForFunction(`document.querySelector('${selector}').value === 'muse-test'`)
+  })
+
   it('base branch: picking a real branch persists; clearing goes back to the checkout', async () => {
     // Whatever branch the dry-run repo actually has, first option after "follow checked-out branch".
     const branch = String(

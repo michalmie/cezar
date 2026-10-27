@@ -123,6 +123,10 @@ const configSchema = z.object({
       codex: z.boolean().optional(),
       opencode: z.boolean().optional(),
       pi: z.boolean().optional(),
+      cursor: z.boolean().optional(),
+      junie: z.boolean().optional(),
+      copilot: z.boolean().optional(),
+      muse: z.boolean().optional(),
     })
     .optional()
     .catch(undefined),

@@ -435,12 +435,13 @@ export type SetConfigResponse = z.infer<typeof setConfigResponseSchema>;
 export const setConfigInputSchema = z.object({
   baseBranch: z.string().trim().min(1).max(200).nullable().optional(),
   defaultRunner: runnerSchema.optional(),
-  systemPrompt: z.string().trim().max(20_000).nullable().optional(),
+  systemPrompt: z.string().trim().max(20_000, 'must be at most 20000 characters').nullable().optional(),
   defaultModels: z
     .object({
       claude: z.string().trim().max(200).nullable().optional(),
       codex: z.string().trim().max(200).nullable().optional(),
       opencode: z.string().trim().max(200).nullable().optional(),
+      junie: z.string().trim().max(200).nullable().optional(),
       cursor: z.string().trim().max(200).nullable().optional(),
       pi: z.string().trim().max(200).nullable().optional(),
       copilot: z.string().trim().max(200).nullable().optional(),
@@ -457,6 +458,10 @@ export const setConfigInputSchema = z.object({
       codex: z.boolean().nullable().optional(),
       opencode: z.boolean().nullable().optional(),
       pi: z.boolean().nullable().optional(),
+      cursor: z.boolean().nullable().optional(),
+      junie: z.boolean().nullable().optional(),
+      copilot: z.boolean().nullable().optional(),
+      muse: z.boolean().nullable().optional(),
     })
     .optional(),
   maxParallel: z.number().int().min(1).max(16).optional(),
