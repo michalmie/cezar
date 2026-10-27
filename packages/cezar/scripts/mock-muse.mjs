@@ -68,6 +68,10 @@ createInterface({ input: process.stdin }).on('line', line => {
     notify('turn/completed', { turnId, terminal: 'completed' });
     });
   } else {
+    // The real host requires a ModelSelection object; a bare modelId is invalid params.
+    if (r.method === 'session/setModel' && typeof r.params.model?.modelId !== 'string') {
+      send({ id: r.id, error: { code: -32602, message: 'session/setModel invalid params: missing field \'model\'' } }); return;
+    }
     if (r.method === 'session/setModel' && process.env.CEZ_MUSE_DELAY_MODEL === '1') {
       setTimeout(() => { modelReady = true; send({ id: r.id, result: {} }); }, 150); return;
     }

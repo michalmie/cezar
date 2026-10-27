@@ -17,3 +17,7 @@ items are shown as task-kind tools without fabricated parent attribution.
 
 The mapper tests replay both inputs against the checked-in expected events;
 ui-parity.test.ts checks the same expected events for every supported capability.
+
+`session/setModel` takes `{ commandId, sessionId, model: { modelId } }` per the
+exported stable schema (`muse schema generate-json-schema`); a bare `modelId`
+param is rejected as invalid params by the real host and the mock alike.

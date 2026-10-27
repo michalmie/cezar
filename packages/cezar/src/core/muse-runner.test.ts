@@ -72,6 +72,17 @@ describe('MuseRunner over the offline MSP peer', () => {
     const next = await new MuseRunner({ bin }).run({ ...spec, resume: true, sessionId: first.sessionId, model: 'muse-test' });
     expect(next.sessionId).toBe(first.sessionId);
   });
+  it('applies the resumed model as a ModelSelection object', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'muse-setmodel-wire-')); const log = join(dir, 'wire.ndjson');
+    try {
+      const first = await new MuseRunner({ bin }).run(spec);
+      await new MuseRunner({ bin }).run({ ...spec, resume: true, sessionId: first.sessionId, model: 'muse-test',
+        env: { CEZ_MUSE_WIRE_LOG: log },
+      });
+      const wire = readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      expect(wire.find(f => f.method === 'session/setModel').params).toMatchObject({ model: { modelId: 'muse-test' } });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
   it('replaces Cezar pre-minted v4 IDs with the native session ID', async () => {
     const sessionId = randomUUID();
     const result = await new MuseRunner({ bin }).run({ ...spec, sessionId });
