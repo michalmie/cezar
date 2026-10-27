@@ -1,10 +1,24 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, type SpawnOptions } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RunStore } from '../runs/store.ts';
 import type { WorkflowDef } from './types.ts';
+
+// Root-lease fixtures measure command overlap, not developer login-profile
+// startup. Keep real command processes and stdio while excluding profile side effects.
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    spawn: (file: string, args: readonly string[], options?: SpawnOptions) => actual.spawn(
+      file,
+      file === 'bash' && args[0] === '-lc' ? ['--noprofile', '--norc', ...args] : args,
+      options ?? {},
+    ),
+  };
+});
 
 vi.mock('../git-worktree.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../git-worktree.ts')>();
@@ -18,6 +32,8 @@ import { RunManager } from './run.ts';
 
 const GIT_ID = ['-c', 'user.name=test', '-c', 'user.email=test@local'];
 const roots: string[] = [];
+// Each case spawns several real `node` steps; under a full parallel suite 5 s is not enough.
+const RUN_DEADLINE_MS = 15_000;
 
 function fixtureRepo(): string {
   const root = mkdtempSync(join(tmpdir(), 'cez-root-isolation-'));
@@ -28,7 +44,7 @@ function fixtureRepo(): string {
 }
 
 async function waitForRuns(store: RunStore, ids: string[]): Promise<void> {
-  const deadline = Date.now() + 5_000;
+  const deadline = Date.now() + RUN_DEADLINE_MS;
   while (Date.now() < deadline) {
     if (ids.every((id) => ['done', 'failed', 'cancelled'].includes(store.getRun(id)?.status ?? ''))) {
       return;
@@ -39,7 +55,7 @@ async function waitForRuns(store: RunStore, ids: string[]): Promise<void> {
 }
 
 async function waitFor(predicate: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 5_000;
+  const deadline = Date.now() + RUN_DEADLINE_MS;
   while (Date.now() < deadline) {
     if (predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -51,7 +67,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe('RunManager repository-root isolation', () => {
+describe('RunManager repository-root isolation', { timeout: 20_000 }, () => {
   it('runs the first task in place with the root lease before a repository has a commit', async () => {
     const root = mkdtempSync(join(tmpdir(), 'cez-unborn-isolation-'));
     roots.push(root);

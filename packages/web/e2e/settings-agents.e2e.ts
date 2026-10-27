@@ -77,6 +77,17 @@ function setSelect(selector: string, value: string) {
   })()`)
 }
 
+const gotoInstructions = () => {
+  browser.goto(`${baseUrl}/settings/instructions`)
+  browser.waitForFunction(`document.querySelector('[data-slot="instructions-system-prompt"]') !== null`)
+}
+
+const gotoTasks = () => {
+  browser.goto(`${baseUrl}/settings/tasks`)
+  // The picker only renders once the repo probe settles (the dry-run repo is a git checkout).
+  browser.waitForFunction(`document.querySelector('[data-slot="tasks-base-branch"]') !== null`)
+}
+
 const gotoAgents = () => {
   browser.goto(`${baseUrl}/settings/agents`)
   browser.waitForFunction(`document.querySelector('[data-slot="agents-section"]') !== null`)
@@ -85,7 +96,7 @@ const gotoAgents = () => {
 describe('settings → agents against the live dry-run server', () => {
   it('renders every knob, agent-agnostically named', () => {
     gotoAgents()
-    browser.waitForFunction(`document.querySelector('[data-slot="agents-base-branch"]') !== null`)
+    browser.waitForFunction(`document.querySelector('[data-slot="agents-model"]') !== null`)
     for (const runner of RUNNER_IDS) {
       expect(browser.count(`[data-slot="agents-runner"] [role="radio"][data-value="${runner}"]`)).toBe(1)
       expect(browser.count(`[data-slot="agents-model"][data-runner="${runner}"]`)).toBe(1)
@@ -93,9 +104,8 @@ describe('settings → agents against the live dry-run server', () => {
     expect(browser.count('[data-slot="agents-model"]')).toBe(RUNNER_IDS.length)
     expect(browser.count(`${modelsLocked ? 'output' : 'select'}[data-slot="agents-model"]`)).toBe(RUNNER_IDS.length)
     expect(browser.count(`${modelsLocked ? 'select' : 'output'}[data-slot="agents-model"]`)).toBe(0)
-    expect(browser.count('[data-slot="agents-system-prompt"]')).toBe(1)
-    // The dry-run repo is a git checkout, so the base-branch picker is the real control.
-    expect(browser.count('[data-slot="agents-base-branch"]')).toBe(1)
+    // The system prompt and base branch moved to their own sections (#1398) — they are not here.
+    expect(browser.count('[data-slot="agents-system-prompt"], [data-slot="agents-base-branch"]')).toBe(0)
   })
 
   it('default runner: click writes config.json and GET /api/v1/config reads it back', async () => {
@@ -109,16 +119,19 @@ describe('settings → agents against the live dry-run server', () => {
 
   it('per-runner model preset: select writes the runner key, others untouched', async ({ skip }) => {
     if (modelsLocked) skip('model selection is locked by CEZ_AGENT_MODELS_LOCKED')
+    // A coding agent's own native model (e.g. ~/.codex/config.toml) shows through as its default,
+    // so "untouched" means unchanged from what the server answered before the pick.
+    const before = await waitForConfig(() => true)
     gotoAgents()
-    const before = await fetch(`${baseUrl}/api/v1/config`).then((response) => response.json()) as ConfigAnswer
     setSelect('[data-slot="agents-model"][data-runner="claude"]', 'opus')
     const config = await waitForConfig((c) => c.defaultModels.claude === 'opus')
     expect({ ...config.defaultModels, claude: undefined }).toEqual({ ...before.defaultModels, claude: undefined })
   })
 
   it('system prompt: explicit save persists the trimmed text', async () => {
-    browser.fill('[data-slot="agents-system-prompt"]', 'Always add tests. (e2e)')
-    browser.click('[data-action="agents-save-prompt"]')
+    gotoInstructions()
+    browser.fill('[data-slot="instructions-system-prompt"]', 'Always add tests. (e2e)')
+    browser.click('[data-action="instructions-save-prompt"]')
     await waitForConfig((c) => c.systemPrompt === 'Always add tests. (e2e)')
   })
 
@@ -142,15 +155,16 @@ describe('settings → agents against the live dry-run server', () => {
   })
 
   it('base branch: picking a real branch persists; clearing goes back to the checkout', async () => {
+    gotoTasks()
     // Whatever branch the dry-run repo actually has, first option after "follow checked-out branch".
     const branch = String(
-      browser.evaluate(`document.querySelector('[data-slot="agents-base-branch"]').options[1]?.value ?? ''`),
+      browser.evaluate(`document.querySelector('[data-slot="tasks-base-branch"]').options[1]?.value ?? ''`),
     )
     expect(branch).not.toBe('')
-    setSelect('[data-slot="agents-base-branch"]', branch)
+    setSelect('[data-slot="tasks-base-branch"]', branch)
     await waitForConfig((c) => c.baseBranch === branch)
 
-    setSelect('[data-slot="agents-base-branch"]', '')
+    setSelect('[data-slot="tasks-base-branch"]', '')
     await waitForConfig((c) => c.baseBranch === null)
   })
 
@@ -181,10 +195,12 @@ describe('settings → agents against the live dry-run server', () => {
         String(browser.evaluate(`document.querySelector('[data-slot="agents-model"][data-runner="claude"]').value`)),
       ).toBe('opus')
     }
-    expect(
-      String(browser.evaluate(`document.querySelector('[data-slot="agents-system-prompt"]').value`)),
-    ).toBe('Always add tests. (e2e)')
     browser.screenshot(`${artifactsDir}/settings-agents.png`)
+    gotoInstructions()
+    expect(
+      String(browser.evaluate(`document.querySelector('[data-slot="instructions-system-prompt"]').value`)),
+    ).toBe('Always add tests. (e2e)')
+    gotoAgents()
 
     // Neutralize for the suites that follow (afterAll restores the file itself too).
     browser.click('[data-slot="agents-runner"] [data-value="claude"]')

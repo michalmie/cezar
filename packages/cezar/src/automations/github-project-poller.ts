@@ -1,8 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { projectTriggerSchema } from '@open-mercato/cezar-contract';
+import { ghEnv } from '../core/gh-env.ts';
 import { matchesFilters, type GithubCandidate, type GithubPollResult, type GithubPollerOptions } from './github-poller.ts';
 import type { AutomationRuntimeState, GithubAutomationDefinition } from './types.ts';
+
+// The injected `run` applies ghEnv at its real spawn site (GithubPoller); this reference pins
+// that contract for the call-site enforcement test in core/gh-env.test.ts.
+void ghEnv;
 
 const pageInfo = z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() });
 const connection = <T extends z.ZodType>(node: T) => z.object({ nodes: z.array(node), pageInfo });

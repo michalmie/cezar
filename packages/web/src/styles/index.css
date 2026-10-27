@@ -172,11 +172,11 @@
   /* The wordmark only. Falls back to the UI face, never to a system display font. */
   --brand: 'Chakra Petch', var(--sans);
 
-  /* reading measure — the max width of the task view's column (header, thread, changes,
-   * commits). The default is the shipped 820px reading column; Settings → Appearance → Reading
-   * width flips it to `wide` (see the `:root[data-width]` block). Consumed as
-   * `max-w-[var(--measure)]` so one token moves every column together. */
-  --measure: 820px;
+  /* reading measure — the max width of the task view's column (header, thread, commits) and
+   * the skill detail view. The default is full-width (`none`) so the cockpit uses the available
+   * screen; Settings → Appearance → Reading width can pin it back to the old 820px reading
+   * column. Consumed as `max-w-[var(--measure)]` so one token moves every column together. */
+  --measure: none;
 
   /* shiki syntax highlighting (dark) */
   --syn-key: #c4b5fd;
@@ -276,11 +276,15 @@
   --spacing: 0.1875rem;
 }
 
-/* Wide reading width (Settings → Appearance → Reading width): open the task-view column from the
- * default 820px to 1180px so long transcripts, diffs and command output use more of the screen.
- * One token, same `:root[…]` (unlayered) lever as density; narrow is the absence of the attribute. */
+/* Narrow reading width (Settings → Appearance → Reading width): pin the task-view column to the
+ * old 820px reading measure. Full width is the absence of the attribute; `wide` remains as a
+ * compatibility alias for a stale cached shell or pre-migration localStorage mirror. */
+:root[data-width='narrow'] {
+  --measure: 820px;
+}
+
 :root[data-width='wide'] {
-  --measure: 1180px;
+  --measure: none;
 }
 
 /* ---------- tokens: radius + shadow ----------
@@ -339,6 +343,8 @@
   --color-success: var(--success);
   --color-pending: var(--pending);
   --color-pending-strong: var(--pending-strong);
+  /* Warning ink and borders — the readable amber, never the --pending fill. */
+  --color-warning: var(--pending-strong);
   --color-info: var(--info);
   --color-conflict: var(--conflict);
 
@@ -412,6 +418,16 @@
   kbd,
   samp {
     font-family: var(--mono);
+  }
+
+  /* v3's preflight gave buttons `cursor: pointer`; v4 dropped that rule, so they fall back to the
+   * user agent's arrow. In this cockpit anything clickable reads as clickable, so enabled buttons
+   * and button-like roles opt back into the pointer. Disabled controls keep the arrow (and their
+   * own `cursor-not-allowed` where set), and an explicit `cursor-*` utility still wins — the
+   * `utilities` layer outranks `base`. */
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']) {
+    cursor: pointer;
   }
 
   ::placeholder {
@@ -528,6 +544,12 @@
 .thread-markdown {
   line-height: 1.6;
 }
+/* #1356: Scroll list containers too: Streamdown makes li > p inline, so paragraph overflow is inert.
+ * Keep markers within the list's padding; clipping individual li would hide outside markers. */
+.thread-markdown :is(p, ul, ol, h1, h2, h3, h4, h5, h6) {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
 .thread-markdown :is(h1, h2, h3, h4, h5, h6) {
   margin: 0.9em 0 0.35em;
   font-size: 1.05em;
@@ -565,6 +587,11 @@
 .thread-markdown [data-streamdown='code-block'] pre {
   font-size: 12px;
   line-height: 1.55;
+}
+/* Streamdown emits one span per line with no newline between them and makes them `block` only
+ * when line numbers are on; we turn those off, so without this every fence collapses to one line. */
+.thread-markdown [data-streamdown='code-block-body'] code > span {
+  display: block;
 }
 
 /* ---------- document markdown (diff preview) ----------
@@ -620,4 +647,21 @@
 }
 .thread-markdown.markdown-document [data-streamdown='code-block'] pre {
   font-size: 13px;
+}
+
+.thread-markdown [data-streamdown='mermaid'] {
+  --pele-bg: var(--background);
+  --pele-fg: var(--foreground);
+  --pele-muted: var(--muted-foreground);
+  --pele-line: var(--muted-foreground);
+  --pele-surface: var(--card);
+  --pele-surface-alt: var(--muted);
+  --pele-border: var(--border);
+  --pele-accent: var(--primary);
+  background: var(--background);
+  border-radius: var(--radius-md);
+}
+
+.thread-markdown [data-streamdown='mermaid'] [role='img'] {
+  width: 100%;
 }
