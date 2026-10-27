@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -71,12 +71,23 @@ describe('RunManager — dispatch tree directory exists before spawn', () => {
     const { env } = await seam().agentEnvForStep(run.id, 'muse');
     expect(env.CEZ_TREE_DIR).toBe(treeDir(dataDir, run.id));
     expect(statSync(env.CEZ_TREE_DIR as string).isDirectory()).toBe(true);
+    // The directory only — brief/order/notes keep their "written at first dispatch" timing.
+    expect(existsSync(join(treeDir(dataDir, run.id), 'brief.md'))).toBe(false);
   });
 
   it('omits CEZ_TREE_DIR when the tree dir cannot be created', async () => {
     const run = newDispatchRoot();
     // A file where `dispatch/` belongs makes the tree dir uncreatable.
     writeFileSync(join(dataDir, 'dispatch'), 'blocked', 'utf8');
+    const { env } = await seam().agentEnvForStep(run.id, 'muse');
+    expect(env.CEZ_TREE_DIR).toBeUndefined();
+  });
+
+  it('omits CEZ_TREE_DIR when the tree path is blocked by a file', async () => {
+    const run = newDispatchRoot();
+    // A file exactly where the tree dir belongs: no directory to grant.
+    mkdirSync(join(dataDir, 'dispatch'), { recursive: true });
+    writeFileSync(treeDir(dataDir, run.id), 'blocked', 'utf8');
     const { env } = await seam().agentEnvForStep(run.id, 'muse');
     expect(env.CEZ_TREE_DIR).toBeUndefined();
   });
