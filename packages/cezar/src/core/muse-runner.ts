@@ -167,7 +167,7 @@ class MuseSession implements AgentSession {
       sessionId: this.sessionId, commandId: museCommandId(), mode: 'allowAll',
     });
     if (this.spec.resume && this.spec.model) await this.request('session/setModel', {
-      sessionId: this.sessionId, commandId: museCommandId(), modelId: this.spec.model,
+      sessionId: this.sessionId, commandId: museCommandId(), model: { modelId: this.spec.model },
     });
     this.ready = true;
     this.emit({ type: 'session', sessionId: this.sessionId });
