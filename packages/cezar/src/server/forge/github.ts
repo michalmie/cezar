@@ -301,6 +301,13 @@ const repoMergePolicySchema = z.object({
   merge_commit_title: z.string().nullish(),
   squash_merge_commit_title: z.string().nullish(),
 });
+/** Required status checks as the protection endpoint answers them — `strict` tells whether a
+ *  `BEHIND` merge status actually blocks the merge. */
+const branchProtectionChecksSchema = z.object({
+  strict: z.boolean().nullish(),
+  contexts: z.array(z.string()).nullish(),
+  checks: z.array(z.object({ context: z.string() })).nullish(),
+});
 const ghMergeResultSchema = z.object({
   merged: z.boolean(),
   message: z.string().nullish(),
@@ -3096,9 +3103,10 @@ export const AGGREGATE_CHECK_NAME = 'All checks';
 export function normalizeMergeState(
   raw: unknown,
   policyRaw: unknown,
-  requirements: { readable: boolean; requiredChecks: string[] } = {
+  requirements: { readable: boolean; requiredChecks: string[]; strict: boolean } = {
     readable: false,
     requiredChecks: [],
+    strict: false,
   },
   checkTier: { tier: ForgePrMergeState['checksTier']; reason?: string } = { tier: 'detailed' },
 ): ForgePrMergeState {
@@ -3147,6 +3155,9 @@ export function normalizeMergeState(
         : methods[0] ?? null;
   const blockers: ForgePrMergeState['blockers'] = [];
   let eligibility: ForgePrMergeState['eligibility'] = 'ready';
+  const mergeStatus = pr.mergeStateStatus?.toUpperCase() ?? 'UNKNOWN';
+  // A behind branch still merges when protection does not demand an up-to-date branch.
+  const statusOk = ['CLEAN', 'HAS_HOOKS'].includes(mergeStatus) || (mergeStatus === 'BEHIND' && !requirements.strict);
   if (state !== 'open') {
     eligibility = 'terminal';
     blockers.push({ code: 'terminal', message: state === 'merged' ? 'This pull request is merged.' : 'This pull request is closed.' });
@@ -3175,16 +3186,19 @@ export function normalizeMergeState(
       code: 'rules-unknown',
       message: 'GitHub could not confirm review and branch-protection requirements.',
     });
-  } else if (checks.some((check) => check.state === 'pending') || pr.mergeStateStatus?.toUpperCase() === 'UNSTABLE') {
+  } else if (mergeStatus === 'BEHIND' && requirements.strict) {
+    // Updating re-runs the checks, so name the update before any pending check on the stale head.
+    eligibility = 'blocked';
+    blockers.push({ code: 'behind', message: `This branch is behind ${pr.baseRefName}. Update it with the latest from ${pr.baseRefName}, then merge.` });
+  } else if (checks.some((check) => check.state === 'pending') || mergeStatus === 'UNSTABLE') {
     eligibility = 'pending';
     blockers.push({ code: 'pending', message: 'Checks or GitHub mergeability are still pending.' });
-  } else if (
-    mergeable !== 'mergeable' ||
-    !['CLEAN', 'HAS_HOOKS'].includes(pr.mergeStateStatus?.toUpperCase() ?? '') ||
-    methods.length === 0
-  ) {
+  } else if (methods.length === 0) {
+    eligibility = 'blocked';
+    blockers.push({ code: 'no-methods', message: 'This repository has no merge methods enabled.' });
+  } else if (mergeable !== 'mergeable' || !statusOk) {
     eligibility = 'unknown';
-    blockers.push({ code: 'unknown', message: 'GitHub could not confirm every merge requirement.' });
+    blockers.push({ code: 'unknown', message: `GitHub could not confirm every merge requirement (merge status ${mergeStatus}).` });
   }
   const canMerge = eligibility === 'ready';
   const canOverride =
@@ -3302,7 +3316,7 @@ export async function fetchPrMergeState(
           statusCheckRollup: [{ name: 'test', conclusion: 'SUCCESS', detailsUrl: 'https://github.com/mock/repo/actions' }],
         },
         { allow_merge_commit: true, allow_squash_merge: true, allow_rebase_merge: true },
-        { readable: true, requiredChecks: ['test'] },
+        { readable: true, requiredChecks: ['test'], strict: false },
       ),
     };
   }
@@ -3334,19 +3348,21 @@ export async function fetchPrMergeState(
       gh(repoRoot, [
         'api',
         `repos/${repoRef.owner}/${repoRef.repo}/branches/${encodeURIComponent(parsedPr.baseRefName)}/protection/required_status_checks`,
-        '--jq',
-        '[.contexts[]?, .checks[]?.context] | unique',
       ])
-        .then((output) => ({ readable: true, requiredChecks: z.array(z.string()).parse(JSON.parse(output)) }))
+        .then((output) => {
+          const protection = branchProtectionChecksSchema.parse(JSON.parse(output));
+          const required = [...(protection.contexts ?? []), ...(protection.checks ?? []).map((check) => check.context)];
+          return { readable: true, requiredChecks: [...new Set(required)], strict: protection.strict ?? false };
+        })
         .catch(async () => {
           // Missing protection is normal on an unprotected branch; a 404 alone can also hide
           // unreadable rules. Confirm the branch explicitly before treating it as rule-free.
           try {
             const output = await gh(repoRoot, ['api', `repos/${repoRef.owner}/${repoRef.repo}/branches/${encodeURIComponent(parsedPr.baseRefName)}`]);
             const branch = z.object({ protected: z.boolean() }).parse(JSON.parse(output));
-            return { readable: !branch.protected, requiredChecks: [] as string[] };
+            return { readable: !branch.protected, requiredChecks: [] as string[], strict: false };
           } catch {
-            return { readable: false, requiredChecks: [] as string[] };
+            return { readable: false, requiredChecks: [] as string[], strict: false };
           }
         }),
       fetchMergeChecks(repoRoot, repoRef, number),

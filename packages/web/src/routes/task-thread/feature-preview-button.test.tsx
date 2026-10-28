@@ -102,7 +102,7 @@ it.each([{ ...ready, baseRef: 'develop', canMerge: false, canOverride: true }, {
   expect(mergeGithubPr).not.toHaveBeenCalled()
 })
 it('shows a waiting loader while GitHub mergeability is unknown', async () => {
-  const waiting = { ...ready, mergeable: 'unknown' as const, reviewDecision: 'not-required' as const, eligibility: 'unknown' as const, blockers: [{ code: 'unknown', message: 'GitHub could not confirm every merge requirement.' }], canMerge: false, canOverride: true }
+  const waiting = { ...ready, mergeable: 'unknown' as const, reviewDecision: 'not-required' as const, eligibility: 'unknown' as const, blockers: [{ code: 'unknown', message: 'GitHub could not confirm every merge requirement (merge status UNKNOWN).' }], canMerge: false, canOverride: true }
   available(); vi.mocked(getGithubPrMergeState).mockResolvedValue({ available: true, mergeState: waiting })
   show({ ...run, pullRequestUrl: ready.url }, `?featureAction=merge&commit=${commit}&number=9`)
   const dialog = await screen.findByRole('dialog')

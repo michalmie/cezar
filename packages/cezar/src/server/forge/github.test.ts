@@ -204,7 +204,7 @@ describe('normalizeMergeState', () => {
       allow_squash_merge: true,
       allow_rebase_merge: true,
       squash_merge_commit_title: 'PR_TITLE',
-    }, { readable: true, requiredChecks: ['test'] });
+    }, { readable: true, requiredChecks: ['test'], strict: false });
     expect(state.methods).toEqual(['squash', 'rebase']);
     expect(state.defaultMethod).toBe('squash');
     expect(state.canMerge).toBe(true);
@@ -215,7 +215,7 @@ describe('normalizeMergeState', () => {
   it.each([null, ''])('recognizes an explicit no-review decision (%s) with readable requirements', (reviewDecision) => {
     const state = normalizeMergeState({ ...ready, reviewDecision }, {
       allow_squash_merge: true,
-    }, { readable: true, requiredChecks: [] });
+    }, { readable: true, requiredChecks: [], strict: false });
     expect(state.reviewDecision).toBe('not-required');
     expect(state.canMerge).toBe(true);
   });
@@ -223,7 +223,7 @@ describe('normalizeMergeState', () => {
   it.each([undefined, 'UNKNOWN', 'NEW_DECISION'])('keeps a missing or unknown review decision (%s) blocked', (reviewDecision) => {
     const state = normalizeMergeState({ ...ready, reviewDecision }, {
       allow_squash_merge: true,
-    }, { readable: true, requiredChecks: [] });
+    }, { readable: true, requiredChecks: [], strict: false });
     expect(state.reviewDecision).toBe('unknown');
     expect(state.canMerge).toBe(false);
   });
@@ -233,14 +233,14 @@ describe('normalizeMergeState', () => {
       allow_merge_commit: true,
       allow_squash_merge: true,
       allow_rebase_merge: true,
-    }, { readable: true, requiredChecks: [] });
+    }, { readable: true, requiredChecks: [], strict: false });
     expect(unknown.eligibility).toBe('unknown');
     expect(unknown.canOverride).toBe(true);
     const changesRequested = normalizeMergeState({ ...ready, reviewDecision: 'CHANGES_REQUESTED' }, {
       allow_merge_commit: true,
       allow_squash_merge: true,
       allow_rebase_merge: true,
-    }, { readable: true, requiredChecks: [] });
+    }, { readable: true, requiredChecks: [], strict: false });
     expect(changesRequested.eligibility).toBe('blocked');
     expect(changesRequested.canOverride).toBe(true);
     expect(normalizeMergeState(ready, {
@@ -248,6 +248,36 @@ describe('normalizeMergeState', () => {
       allow_squash_merge: true,
       allow_rebase_merge: true,
     }).eligibility).toBe('unknown');
+  });
+
+  it('blocks a behind branch only when protection demands an up-to-date branch', () => {
+    const policy = { allow_squash_merge: true };
+    const behind = { ...ready, mergeStateStatus: 'BEHIND' };
+    const strict = normalizeMergeState(behind, policy, { readable: true, requiredChecks: [], strict: true });
+    expect(strict.eligibility).toBe('blocked');
+    expect(strict.canMerge).toBe(false);
+    expect(strict.canOverride).toBe(true);
+    expect(strict.blockers).toEqual([{
+      code: 'behind',
+      message: 'This branch is behind main. Update it with the latest from main, then merge.',
+    }]);
+    const lax = normalizeMergeState(behind, policy, { readable: true, requiredChecks: [], strict: false });
+    expect(lax.eligibility).toBe('ready');
+    expect(lax.canMerge).toBe(true);
+    expect(lax.blockers).toEqual([]);
+  });
+
+  it('names the irreconcilable merge status, and a repository with no merge methods', () => {
+    const policy = { allow_squash_merge: true };
+    const blocked = normalizeMergeState({ ...ready, mergeStateStatus: 'BLOCKED' }, policy, { readable: true, requiredChecks: [], strict: false });
+    expect(blocked.eligibility).toBe('unknown');
+    expect(blocked.canOverride).toBe(true);
+    expect(blocked.blockers).toEqual([{ code: 'unknown', message: expect.stringContaining('BLOCKED') }]);
+    const noMethods = normalizeMergeState(ready, {}, { readable: true, requiredChecks: [], strict: false });
+    expect(noMethods.eligibility).toBe('blocked');
+    expect(noMethods.canMerge).toBe(false);
+    expect(noMethods.canOverride).toBe(false);
+    expect(noMethods.blockers).toEqual([{ code: 'no-methods', message: 'This repository has no merge methods enabled.' }]);
   });
 
   it('never makes terminal, draft, or conflicting pull requests overridable', () => {
@@ -266,7 +296,7 @@ describe('normalizeMergeState', () => {
       allow_merge_commit: true,
       allow_squash_merge: true,
       allow_rebase_merge: true,
-    }, { readable: true, requiredChecks: [] });
+    }, { readable: true, requiredChecks: [], strict: false });
     expect(mergePreflightAllowed(state)).toBe(false);
     expect(mergePreflightAllowed(state, true)).toBe(true);
     expect(mergePreflightAllowed({ ...state, canOverride: false }, true)).toBe(false);
@@ -3322,7 +3352,7 @@ describe('fetchPrMergeState and an unreadable statusCheckRollup (#969)', () => {
       core: () => { throw new Error('Unknown JSON field: "headRefOid"'); },
       aggregate: () => ({ data: { repository: { pullRequest: corePr } } }),
       detail: () => ({ statusCheckRollup: [] }),
-      protection: () => [],
+      protection: () => ({ strict: false, contexts: [], checks: [] }),
     });
     const out = await fetchPrMergeState('/repo/older-gh', repoRef, 353, true);
     expect(out.available).toBe(true);
@@ -3406,7 +3436,7 @@ describe('fetchPrMergeState and an unreadable statusCheckRollup (#969)', () => {
   });
 
   it('still blocks on a red CI it could only read in aggregate', async () => {
-    routeGh({ aggregate: () => aggregate('FAILURE'), protection: () => ['ci'] });
+    routeGh({ aggregate: () => aggregate('FAILURE'), protection: () => ({ strict: false, contexts: ['ci'], checks: [] }) });
 
     const out = await fetchPrMergeState('/repo/aggregate-red', repoRef, 353);
 
@@ -3423,7 +3453,7 @@ describe('fetchPrMergeState and an unreadable statusCheckRollup (#969)', () => {
   it('says so, rather than "no checks", when neither tier is readable', async () => {
     // Empty `checks` with a `detailed` tier means "this PR has no CI"; here it means "we never
     // found out", and that must never read as ready to merge.
-    routeGh({ protection: () => ['ci'] });
+    routeGh({ protection: () => ({ strict: false, contexts: ['ci'], checks: [] }) });
 
     const out = await fetchPrMergeState('/repo/both-dark', repoRef, 353);
 
@@ -3437,7 +3467,7 @@ describe('fetchPrMergeState and an unreadable statusCheckRollup (#969)', () => {
   });
 
   it('reports a head with no CI as no CI, not as an unreadable tier', async () => {
-    routeGh({ aggregate: () => aggregate(null), protection: () => ['ci'] });
+    routeGh({ aggregate: () => aggregate(null), protection: () => ({ strict: false, contexts: ['ci'], checks: [] }) });
 
     const out = await fetchPrMergeState('/repo/no-ci', repoRef, 353);
 
@@ -3450,7 +3480,7 @@ describe('fetchPrMergeState and an unreadable statusCheckRollup (#969)', () => {
   it('keeps the full per-check detail on a token that can read it', async () => {
     // The classic-token shape — nothing about the split may cost the readable case its rows.
     routeGh({
-      protection: () => ['lint · typecheck · build'],
+      protection: () => ({ strict: false, contexts: ['lint · typecheck · build'], checks: [] }),
       detail: () => ({
         statusCheckRollup: [
           { name: 'lint · typecheck · build', status: 'COMPLETED', conclusion: 'SUCCESS', detailsUrl: 'https://github.com/acme/demo/actions/runs/1' },
@@ -3489,6 +3519,24 @@ describe('fetchPrMergeState and an unreadable statusCheckRollup (#969)', () => {
     expect(out.available).toBe(false);
     if (out.available) throw new Error('expected unavailable');
     expect(out.reason).toContain('Resource not accessible by personal access token');
+  });
+
+  it.each([
+    { strict: true, eligibility: 'blocked', canMerge: false, codes: ['behind'] },
+    { strict: false, eligibility: 'ready', canMerge: true, codes: [] },
+  ])('reads a behind branch as $eligibility when protection strict is $strict', async ({ strict, eligibility, canMerge, codes }) => {
+    routeGh({
+      core: () => ({ ...corePr, mergeStateStatus: 'BEHIND', reviewDecision: null }),
+      detail: () => ({ statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] }),
+      protection: () => ({ strict, contexts: ['ci'], checks: [] }),
+    });
+
+    const out = await fetchPrMergeState('/repo/behind', repoRef, 353, true);
+
+    if (!out.available) throw new Error(out.reason);
+    expect(out.mergeState.eligibility).toBe(eligibility);
+    expect(out.mergeState.canMerge).toBe(canMerge);
+    expect(out.mergeState.blockers.map((blocker) => blocker.code)).toEqual(codes);
   });
 });
 
