@@ -13,7 +13,9 @@ until Cancel.
 The second action is **Merge PR into main**. Preview is optional; GitHub checks
 and review requirements still apply. The merge screen shows the selected commit,
 PR and requirements. **Reviews: not required** is valid when GitHub confirms
-there is no review requirement; unreadable requirements still block merging.
+there is no review requirement; unreadable requirements block merging until the
+operator explicitly confirms **Merge without waiting for requirements**. GitHub
+remains authoritative and may still refuse.
 If no PR exists, **Create PR for main** publishes only the
 selected clean commit, then lets the operator review and merge. It never silently
 autosaves or publishes another version, changes a PR's target, or bypasses rules.

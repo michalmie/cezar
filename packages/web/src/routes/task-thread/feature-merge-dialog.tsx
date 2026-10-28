@@ -16,6 +16,7 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange }: {
   const [createdNumber, setCreatedNumber] = useState<number | null>(null)
   const number = createdNumber ?? ownedTaskPr(run)?.number
   const [method, setMethod] = useState<GithubMergeMethod | null>(null)
+  const [overrideRules, setOverrideRules] = useState(false)
   const status = useQuery({
     queryKey: [projectId, 'feature-merge', run.id, number, commit],
     queryFn: () => getGithubPrMergeState(number!, { refresh: true }),
@@ -26,6 +27,7 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange }: {
   const selected = method && state?.methods.includes(method) ? method : state?.defaultMethod ?? state?.methods[0]
   const wrongVersion = state && state.headSha !== commit
   const wrongBase = state && state.baseRef !== 'main'
+  const mergeAllowed = Boolean(state && selected && !wrongVersion && !wrongBase && (state.canMerge || (state.canOverride && overrideRules)))
   const create = useMutation({
     mutationFn: () => createRunPr(run.id, { draft: false, baseBranch: 'main', expectedHeadSha: commit }),
     onSuccess: result => {
@@ -36,8 +38,8 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange }: {
   })
   const merge = useMutation({
     mutationFn: () => {
-      if (!number || !state || !selected || wrongVersion || wrongBase || !state.canMerge) throw new Error('This selected version is not ready to merge into main.')
-      return mergeGithubPr(number, { method: selected, expectedHeadSha: commit, expectedBaseRef: 'main', overrideRules: false })
+      if (!number || !state || !selected || wrongVersion || wrongBase || !(state.canMerge || (state.canOverride && overrideRules))) throw new Error('This selected version is not ready to merge into main.')
+      return mergeGithubPr(number, { method: selected, expectedHeadSha: commit, expectedBaseRef: 'main', overrideRules: overrideRules && state.canOverride })
     },
     onSuccess: () => { void status.refetch(); void client.invalidateQueries({ queryKey: queryKeys.runs.all }) },
     onError: () => { void status.refetch() },
@@ -60,6 +62,7 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange }: {
         {state.checks.map(check => <p key={check.name}>{check.name}: {check.state}{check.required ? ' (required)' : ''}</p>)}
         {state.checksReason ? <p>{state.checksReason}</p> : null}
         {state.blockers.map(blocker => <p key={blocker.code}>{blocker.message}</p>)}
+        {state.canOverride && !wrongVersion && !wrongBase ? <label className="flex cursor-pointer items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs"><input type="checkbox" checked={overrideRules} onChange={e => setOverrideRules(e.target.checked)} className="mt-0.5 size-4 accent-primary" /><span><span className="block font-medium">Merge without waiting for requirements</span><span className="mt-0.5 block text-soft-foreground">GitHub will allow this only if your permissions can bypass the repository rules.</span></span></label> : null}
         {state.methods.length ? <label className="grid gap-1">Merge method<select aria-label="Merge method" className="rounded border border-border bg-background p-2 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50" value={selected ?? ''} onChange={e => setMethod(e.target.value as GithubMergeMethod)}>{state.methods.map(value => <option key={value} value={value}>{value === 'squash' ? 'Squash and merge' : value === 'rebase' ? 'Rebase and merge' : 'Create a merge commit'}</option>)}</select></label> : null}
       </div> : null}
       {create.error || merge.error ? <p role="alert" className="text-danger">{create.error?.message ?? merge.error?.message}</p> : null}
@@ -68,7 +71,7 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange }: {
         <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>Close</Button>
         {!number ? <Button disabled={busy} onClick={() => create.mutate()}>{create.isPending ? 'Creating PR…' : 'Create PR for main'}</Button> : <>
           <Button variant="outline" disabled={busy || status.isFetching} onClick={() => { void status.refetch() }}>Refresh</Button>
-          <Button disabled={busy || merge.isSuccess || !state?.canMerge || !selected || !!wrongVersion || !!wrongBase} onClick={() => merge.mutate()}>{merge.isPending ? 'Merging…' : 'Merge PR into main'}</Button>
+          <Button disabled={busy || merge.isSuccess || !mergeAllowed} onClick={() => merge.mutate()}>{merge.isPending ? 'Merging…' : 'Merge PR into main'}</Button>
         </>}
       </DialogFooter>
     </DialogContent>
