@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { CircleCheckIcon, CircleIcon, CircleXIcon, LoaderCircleIcon } from 'lucide-react'
 import { useState } from 'react'
 import type { ApiRun, GithubMergeMethod } from '@open-mercato/cezar-api-client'
 import { createRunPr, getGithubPrMergeState, mergeGithubPr } from '@/api/client'
@@ -7,6 +8,22 @@ import { queryKeys } from '@/api/queries'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ownedTaskPr } from '@/lib/tasks-table'
+import { cn } from '@/lib/utils'
+
+type RequirementState = 'passing' | 'failing' | 'pending' | 'unknown'
+
+// Same icon vocabulary as the GitHub tab merge box.
+function RequirementIcon({ state }: { state: RequirementState }) {
+  const iconClass = 'size-4 shrink-0'
+  if (state === 'passing') return <CircleCheckIcon aria-hidden="true" className={cn(iconClass, 'text-success')} />
+  if (state === 'failing') return <CircleXIcon aria-hidden="true" className={cn(iconClass, 'text-danger')} />
+  if (state === 'pending') return <LoaderCircleIcon aria-hidden="true" className={cn(iconClass, 'animate-spin text-warning')} />
+  return <CircleIcon aria-hidden="true" className={cn(iconClass, 'text-soft-foreground')} />
+}
+
+function methodLabel(value: GithubMergeMethod) {
+  return value === 'squash' ? 'Squash and merge' : value === 'rebase' ? 'Rebase and merge' : 'Create a merge commit'
+}
 
 export function FeatureMergeDialog({ run, commit, open, onOpenChange }: {
   run: ApiRun; commit: string; open: boolean; onOpenChange: (open: boolean) => void
@@ -27,7 +44,8 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange }: {
   const selected = method && state?.methods.includes(method) ? method : state?.defaultMethod ?? state?.methods[0]
   const wrongVersion = state && state.headSha !== commit
   const wrongBase = state && state.baseRef !== 'main'
-  const mergeAllowed = Boolean(state && selected && !wrongVersion && !wrongBase && (state.canMerge || (state.canOverride && overrideRules)))
+  const mismatched = Boolean(wrongVersion || wrongBase)
+  const mergeAllowed = Boolean(state && selected && !mismatched && (state.canMerge || (state.canOverride && overrideRules)))
   const create = useMutation({
     mutationFn: () => createRunPr(run.id, { draft: false, baseBranch: 'main', expectedHeadSha: commit }),
     onSuccess: result => {
@@ -45,33 +63,63 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange }: {
     onError: () => { void status.refetch() },
   })
   const busy = create.isPending || merge.isPending
-  return <Dialog open={open} onOpenChange={value => { if (!busy) onOpenChange(value) }}>
+  // Server truth first; the fresh mutation covers the refetch gap. Reset on close so a reopen never replays a stale success.
+  const showSuccess = Boolean(!mismatched && (merge.isSuccess || state?.state === 'merged'))
+  const openPr = state?.state === 'open'
+  const showMergeAction = !state || (openPr && !mismatched)
+  const title = showSuccess ? 'Merged into main' : state?.state === 'closed' ? 'Pull request closed' : state?.state === 'merged' ? 'Already merged' : 'Merge PR into main'
+  const description = showSuccess
+    ? `Version ${commit.slice(0, 8)} of this task is now on main.`
+    : state?.state === 'closed'
+      ? 'This pull request was closed without merging.'
+      : state?.state === 'merged'
+        ? 'This pull request is merged, but not at this task\u2019s selected version.'
+        : 'Preview is optional. GitHub checks and review requirements still apply. Merge this task\u2019s selected version after reviewing its changes.'
+  const close = () => { merge.reset(); onOpenChange(false) }
+  const reviewState: RequirementState = !state || state.reviewDecision === 'unknown' ? 'unknown' : state.reviewDecision === 'approved' || state.reviewDecision === 'not-required' ? 'passing' : 'failing'
+  const conflictState: RequirementState = !state || state.mergeable === 'unknown' ? 'unknown' : state.mergeable === 'mergeable' ? 'passing' : 'failing'
+  const prNumber = state?.number ?? merge.data?.number ?? number
+  const prUrl = state?.url ?? merge.data?.url
+  return <Dialog open={open} onOpenChange={value => { if (!busy) { if (!value) merge.reset(); onOpenChange(value) } }}>
     <DialogContent className="max-h-[85svh] overflow-y-auto">
-      <DialogHeader><DialogTitle>Merge PR into main</DialogTitle><DialogDescription>Preview is optional. GitHub checks and review requirements still apply. Merge this task&apos;s selected version after reviewing its changes.</DialogDescription></DialogHeader>
+      <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{description}</DialogDescription></DialogHeader>
       <p className="break-all font-mono text-xs">Commit {commit}</p>
       {!number ? <p className="text-sm">This task has no pull request yet. Create a PR for main, then review its merge requirements here.</p> : null}
       {number && status.isPending ? <p role="status">Loading PR merge requirements…</p> : null}
       {number && status.data?.available === false ? <p role="alert">{status.data.reason}</p> : null}
       {status.error ? <p role="alert">{status.error.message}</p> : null}
-      {state ? <div className="grid gap-3 text-sm">
+      {showSuccess ? <div role="status" className="flex items-start gap-3 rounded-lg border border-success/40 bg-success/5 p-4">
+        <CircleCheckIcon aria-hidden="true" className="size-8 shrink-0 text-success" />
+        <div className="grid min-w-0 gap-1 text-sm">
+          <p className="font-semibold">PR #{prNumber} is now on main.</p>
+          {state ? <p className="text-soft-foreground">{state.headRef} → {state.baseRef}</p> : null}
+          <p className="break-all font-mono text-xs" title={commit}>Version {commit.slice(0, 8)}{merge.data?.mergeCommitSha ? ` · Merge commit ${merge.data.mergeCommitSha.slice(0, 8)}` : ''}</p>
+          {prUrl ? <a href={prUrl} target="_blank" rel="noopener noreferrer" className="underline">View PR #{prNumber} ↗</a> : null}
+        </div>
+      </div> : null}
+      {!showSuccess && state ? <div className="grid gap-3 text-sm">
         <a href={state.url} target="_blank" rel="noopener noreferrer" className="underline">Review PR #{state.number} ↗</a>
         <p>{state.headRef} → {state.baseRef} · {state.state}{state.isDraft ? ' · draft' : ''}</p>
         {wrongVersion ? <p role="alert" className="text-danger">The PR commit differs from this task version. Review the updated task before merging.</p> : null}
         {wrongBase ? <p role="alert" className="text-danger">This PR targets {state.baseRef}. It must target main before using this action.</p> : null}
-        <p>Reviews: {state.reviewDecision.replaceAll('-', ' ')} · Conflicts: {state.mergeable}</p>
-        {state.checks.map(check => <p key={check.name}>{check.name}: {check.state}{check.required ? ' (required)' : ''}</p>)}
-        {state.checksReason ? <p>{state.checksReason}</p> : null}
+        {openPr && !mismatched ? <ul className="grid gap-2 text-sm">
+          <li className="flex items-center gap-2"><RequirementIcon state={reviewState} /><span>Reviews: {state.reviewDecision.replaceAll('-', ' ')}</span></li>
+          <li className="flex items-center gap-2"><RequirementIcon state={conflictState} /><span>Conflicts: {state.mergeable === 'conflicting' ? 'present' : state.mergeable === 'mergeable' ? 'none' : 'unknown'}</span></li>
+          {state.checks.length === 0 && state.checksTier !== 'none' ? <li>No checks configured</li> : state.checks.map(check => <li key={check.name} className="flex items-center gap-2"><RequirementIcon state={check.state} /><span>{check.name} · {check.state}{check.required === true ? ' · required' : check.required === null ? ' · requiredness unknown' : ''}</span></li>)}
+          {state.checksTier !== 'detailed' ? <li className="flex items-start gap-2"><RequirementIcon state="unknown" /><span>{state.checksTier === 'aggregate' ? 'Only the rolled-up check state is readable here — per-check detail is not.' : 'This token cannot read the checks on this pull request.'}{state.checksReason ? ` ${state.checksReason}` : ''}</span></li> : null}
+        </ul> : null}
         {state.blockers.map(blocker => <p key={blocker.code}>{blocker.message}</p>)}
-        {state.canOverride && !wrongVersion && !wrongBase ? <label className="flex cursor-pointer items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs"><input type="checkbox" checked={overrideRules} onChange={e => setOverrideRules(e.target.checked)} className="mt-0.5 size-4 accent-primary" /><span><span className="block font-medium">Merge without waiting for requirements</span><span className="mt-0.5 block text-soft-foreground">GitHub will allow this only if your permissions can bypass the repository rules.</span></span></label> : null}
-        {state.methods.length ? <label className="grid gap-1">Merge method<select aria-label="Merge method" className="rounded border border-border bg-background p-2 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50" value={selected ?? ''} onChange={e => setMethod(e.target.value as GithubMergeMethod)}>{state.methods.map(value => <option key={value} value={value}>{value === 'squash' ? 'Squash and merge' : value === 'rebase' ? 'Rebase and merge' : 'Create a merge commit'}</option>)}</select></label> : null}
+        {openPr && state.canOverride && !mismatched ? <label className="flex cursor-pointer items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs"><input type="checkbox" checked={overrideRules} onChange={e => setOverrideRules(e.target.checked)} className="mt-0.5 size-4 accent-primary" /><span><span className="block font-medium">Merge without waiting for requirements</span><span className="mt-0.5 block text-soft-foreground">GitHub will allow this only if your permissions can bypass the repository rules.</span></span></label> : null}
+        {openPr && !mismatched && state.methods.length ? <label className="grid gap-1">Merge method<select aria-label="Merge method" className="rounded border border-border bg-background p-2 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50" value={selected ?? ''} onChange={e => setMethod(e.target.value as GithubMergeMethod)}>{state.methods.map(value => <option key={value} value={value}>{methodLabel(value)}</option>)}</select></label> : null}
       </div> : null}
       {create.error || merge.error ? <p role="alert" className="text-danger">{create.error?.message ?? merge.error?.message}</p> : null}
-      {merge.isSuccess ? <p role="status">PR merged into main.</p> : null}
       <DialogFooter>
-        <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>Close</Button>
-        {!number ? <Button disabled={busy} onClick={() => create.mutate()}>{create.isPending ? 'Creating PR…' : 'Create PR for main'}</Button> : <>
-          <Button variant="outline" disabled={busy || status.isFetching} onClick={() => { void status.refetch() }}>Refresh</Button>
-          <Button disabled={busy || merge.isSuccess || !mergeAllowed} onClick={() => merge.mutate()}>{merge.isPending ? 'Merging…' : 'Merge PR into main'}</Button>
+        {showSuccess ? <Button onClick={close}>Done</Button> : <>
+          <Button variant="outline" disabled={busy} onClick={close}>Close</Button>
+          {!number ? <Button disabled={busy} onClick={() => create.mutate()}>{create.isPending ? 'Creating PR…' : 'Create PR for main'}</Button> : <>
+            <Button variant="outline" disabled={busy || status.isFetching} onClick={() => { void status.refetch() }}>Refresh</Button>
+            {showMergeAction ? <Button disabled={busy || !mergeAllowed} onClick={() => merge.mutate()}>{merge.isPending ? 'Merging…' : 'Merge PR into main'}</Button> : null}
+          </>}
         </>}
       </DialogFooter>
     </DialogContent>
