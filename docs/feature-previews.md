@@ -1,9 +1,11 @@
 # Feature previews in Vibe Factory
 
-Completed Ready tasks in a Vibe Factory project offer **Build preview** beside
-the task's git action. The button POSTs the exact task, issue and commit to the
-connected Factory in a new window. Factory validates the existing result gate,
-builds an isolated Preview environment and opens the application when healthy.
+Finished tasks in a Vibe Factory project offer **Build preview** beside
+the task's git action. The button POSTs the exact task version to the
+connected Factory in a new window: Ready results hand off task, issue and
+commit; tasks without a Ready claim hand off task, branch and commit instead.
+Factory validates the selection, builds an isolated Preview environment and
+opens the application when healthy.
 Repeated handoffs reuse the same active version. A different active feature is
 automatically stopped before the selected version builds; its data is retained
 until Cancel.
@@ -29,8 +31,8 @@ from the Factory root; edited summaries and existing preview blocks are preserve
 
 Open the project's Environments page in Factory once to publish its managed
 discovery record (`config/feature-preview-bridge.json`). Discovery requires the
-Factory workspace layout, a committed preview adapter and a completed result
-In review; ordinary Cezar projects keep their existing header.
+Factory workspace layout, a committed preview adapter and a finished task;
+ordinary Cezar projects keep their existing header.
 
 **Cancel preview** in Factory removes disposable preview data and services.
 **Review / merge in Cezar** returns to the task. Building or cancelling a preview

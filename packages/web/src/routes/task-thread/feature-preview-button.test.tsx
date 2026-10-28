@@ -15,7 +15,7 @@ function show(task = run, search = '') {
   return { ...render(<MemoryRouter initialEntries={[`/tasks/${task.id}${search}`]}><QueryClientProvider client={client}><FeaturePreviewButton run={task} /></QueryClientProvider></MemoryRouter>), client }
 }
 it('opens a Factory POST handoff in a new window with the exact version', async () => {
-  vi.mocked(getFeaturePreview).mockResolvedValue({ available: true, factoryUrl: 'http://factory.example:3000/api/projects/demo/feature-preview', taskId, number: 9, commit: 'a'.repeat(40) })
+  vi.mocked(getFeaturePreview).mockResolvedValue({ available: true, mode: 'claim', factoryUrl: 'http://factory.example:3000/api/projects/demo/feature-preview', taskId, number: 9, commit: 'a'.repeat(40) })
   show()
   const form = (await screen.findByRole('button', { name: 'Build preview' })).closest('form')!
   expect(form.method).toBe('post'); expect(form.target).toBe('_blank'); expect(form.getAttribute('rel')).toBe('noopener')
@@ -24,7 +24,8 @@ it('opens a Factory POST handoff in a new window with the exact version', async 
   expect(screen.getByRole('button', { name: 'Merge PR into main' })).toBeTruthy()
 })
 const commit = 'a'.repeat(40)
-function available() { vi.mocked(getFeaturePreview).mockResolvedValue({ available: true, factoryUrl: 'http://factory.example:3000/api/projects/demo/feature-preview', taskId, number: 9, commit }) }
+function available() { vi.mocked(getFeaturePreview).mockResolvedValue({ available: true, mode: 'claim', factoryUrl: 'http://factory.example:3000/api/projects/demo/feature-preview', taskId, number: 9, commit }) }
+function availableManual() { vi.mocked(getFeaturePreview).mockResolvedValue({ available: true, mode: 'manual', factoryUrl: 'http://factory.example:3000/api/projects/demo/feature-preview', taskId, commit, branch: 'cez/task', title: 'Feature' }) }
 const ready = { number: 9, title: 'Feature', url: 'https://github.com/acme/demo/pull/9', state: 'open' as const, isDraft: false, headRef: 'cez/task', baseRef: 'main', headSha: commit,
   mergeable: 'mergeable' as const, reviewDecision: 'approved' as const, checks: [], checksTier: 'detailed' as const, methods: ['squash' as const], defaultMethod: 'squash' as const, eligibility: 'ready' as const, blockers: [], canMerge: true, canOverride: false }
 it('opens GitHub result links without creating a PR, merging or submitting a preview', async () => {
@@ -61,7 +62,7 @@ it.each([{ ...ready, baseRef: 'develop' }, { ...ready, headSha: 'b'.repeat(40) }
 it('keeps a GitHub preview link pinned while task discovery refreshes', async () => {
   available(); const { client } = show(run, `?featureAction=preview&commit=${commit}&number=9`)
   const dialog = await screen.findByRole('dialog')
-  await act(async () => { client.setQueryData([null, 'feature-preview', run.id, run.status, run.finishedAt], { available: true, factoryUrl: 'http://factory.example:3000/api/projects/demo/feature-preview', taskId, number: 9, commit: 'b'.repeat(40) }) })
+  await act(async () => { client.setQueryData([null, 'feature-preview', run.id, run.status, run.finishedAt], { available: true, mode: 'claim', factoryUrl: 'http://factory.example:3000/api/projects/demo/feature-preview', taskId, number: 9, commit: 'b'.repeat(40) }) })
   const form = within(dialog).getByRole('button', { name: 'Build preview' }).closest('form')!
   expect(new FormData(form).get('commit')).toBe(commit)
 })
@@ -74,6 +75,19 @@ it('creates a missing PR for the selected commit only after the explicit Create 
   fireEvent.click(within(dialog).getByRole('button', { name: 'Create PR for main' }))
   await vi.waitFor(() => expect(createRunPr).toHaveBeenCalledWith(taskId, { draft: false, baseBranch: 'main', expectedHeadSha: commit }))
   expect(mergeGithubPr).not.toHaveBeenCalled()
+})
+it('posts a manual branch handoff without an issue number', async () => {
+  availableManual(); show()
+  const form = (await screen.findByRole('button', { name: 'Build preview' })).closest('form')!
+  expect(Object.fromEntries(new FormData(form))).toEqual({ manual: 'true', taskId, commit, branch: 'cez/task', title: 'Feature', cezarProjectId: '' })
+  expect(screen.getByRole('button', { name: 'Merge PR into main' })).toBeTruthy()
+})
+it('opens a manual preview link pinned to its commit without a number', async () => {
+  availableManual(); show(run, `?featureAction=preview&commit=${commit}`)
+  const dialog = await screen.findByRole('dialog')
+  expect(within(dialog).getByText(/Build branch cez\/task/)).toBeTruthy()
+  const form = within(dialog).getByRole('button', { name: 'Build preview' }).closest('form')!
+  expect(new FormData(form).get('branch')).toBe('cez/task')
 })
 it('does not offer a build for active or unsupported tasks', async () => {
   show({ ...run, status: 'running' })
