@@ -16,7 +16,10 @@ PR and requirements. **Reviews: not required** is valid when GitHub confirms
 there is no review requirement; unreadable requirements block merging until the
 operator explicitly confirms **Merge without waiting for requirements**. GitHub
 remains authoritative and may still refuse. A merged PR shows a confirmation
-with the merge commit instead of the requirements.
+with the merge commit instead of the requirements. A conflicting PR offers
+**Resolve conflicts in PR #N** instead of merge controls, asking the task's
+agent to resolve and push; when the PR moves to a new version, **Review
+updated version** adopts it after review.
 If no PR exists, **Create PR for main** publishes only the
 selected clean commit, then lets the operator review and merge. It never silently
 autosaves or publishes another version, changes a PR's target, or bypasses rules.

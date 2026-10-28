@@ -61,6 +61,6 @@ export function FeaturePreviewButton({ run }: { run: ApiRun }) {
     <Button variant="outline" size="sm" title="Preview optional; GitHub checks and review requirements still apply" onClick={() => { setMergeCommit(data.commit); setMergeOpen(true) }}><GitMergeIcon aria-hidden="true" />Merge PR into main</Button>
     {linkError ? <p role="alert" className="w-full text-xs text-danger">{linkError}</p> : null}
     <Dialog open={previewOpen} onOpenChange={setPreviewOpen}><DialogContent><DialogHeader><DialogTitle>Build preview</DialogTitle><DialogDescription>{previewSelection?.mode === 'manual' ? <>Build branch {previewSelection.branch}, version {previewSelection?.commit.slice(0, 8)} in Factory.</> : <>Build issue #{previewSelection?.number}, version {previewSelection?.commit.slice(0, 8)} in Factory.</>} Any previous preview will stop first. The preview opens in a new window when ready.</DialogDescription></DialogHeader>{form(previewSelection ?? data)}</DialogContent></Dialog>
-    <FeatureMergeDialog key={`${run.id}:${mergeCommit ?? data.commit}`} run={run} commit={mergeCommit ?? data.commit} open={mergeOpen} onOpenChange={setMergeOpen} />
+    <FeatureMergeDialog key={`${run.id}:${mergeCommit ?? data.commit}`} run={run} commit={mergeCommit ?? data.commit} open={mergeOpen} onOpenChange={setMergeOpen} onAdoptCommit={setMergeCommit} />
   </div>
 }

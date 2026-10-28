@@ -7,8 +7,11 @@ import { useProjectScope } from '@/api/project-scope-context'
 import { queryKeys } from '@/api/queries'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { toast } from '@/components/ui/toaster'
 import { ownedTaskPr } from '@/lib/tasks-table'
 import { cn } from '@/lib/utils'
+import { useAskAnswer } from './ask-answer'
+import { resolveConflictsPrompt } from './run-actions'
 
 type RequirementState = 'passing' | 'failing' | 'pending' | 'unknown'
 
@@ -25,8 +28,8 @@ function methodLabel(value: GithubMergeMethod) {
   return value === 'squash' ? 'Squash and merge' : value === 'rebase' ? 'Rebase and merge' : 'Create a merge commit'
 }
 
-export function FeatureMergeDialog({ run, commit, open, onOpenChange }: {
-  run: ApiRun; commit: string; open: boolean; onOpenChange: (open: boolean) => void
+export function FeatureMergeDialog({ run, commit, open, onOpenChange, onAdoptCommit }: {
+  run: ApiRun; commit: string; open: boolean; onOpenChange: (open: boolean) => void; onAdoptCommit: (commit: string) => void
 }) {
   const { projectId } = useProjectScope()
   const client = useQueryClient()
@@ -62,11 +65,14 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange }: {
     onSuccess: () => { void status.refetch(); void client.invalidateQueries({ queryKey: queryKeys.runs.all }) },
     onError: () => { void status.refetch() },
   })
-  const busy = create.isPending || merge.isPending
+  const agent = useAskAnswer(run, undefined, 'git_step')
+  const [resolving, setResolving] = useState(false)
+  const busy = create.isPending || merge.isPending || resolving
   // Server truth first; the fresh mutation covers the refetch gap. Reset on close so a reopen never replays a stale success.
   const showSuccess = Boolean(!mismatched && (merge.isSuccess || state?.state === 'merged'))
   const openPr = state?.state === 'open'
-  const showMergeAction = !state || (openPr && !mismatched)
+  const conflicting = Boolean(openPr && state?.mergeable === 'conflicting')
+  const showMergeAction = !state || (openPr && !mismatched && !conflicting)
   const title = showSuccess ? 'Merged into main' : state?.state === 'closed' ? 'Pull request closed' : state?.state === 'merged' ? 'Already merged' : 'Merge PR into main'
   const description = showSuccess
     ? `Version ${commit.slice(0, 8)} of this task is now on main.`
@@ -76,6 +82,15 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange }: {
         ? 'This pull request is merged, but not at this task\u2019s selected version.'
         : 'Preview is optional. GitHub checks and review requirements still apply. Merge this task\u2019s selected version after reviewing its changes.'
   const close = () => { merge.reset(); onOpenChange(false) }
+  const resolve = async () => {
+    if (!number || agent.isPending || resolving) return
+    setResolving(true)
+    const failure = await agent.send(resolveConflictsPrompt(number))
+    setResolving(false)
+    // One-shot caller: the panel closes, so the answer toasts where it acted.
+    if (failure) toast(failure, { tone: 'danger' })
+    else { toast(`Resolving conflicts in PR #${number} — reopen Merge when the agent pushes.`); close() }
+  }
   const reviewState: RequirementState = !state || state.reviewDecision === 'unknown' ? 'unknown' : state.reviewDecision === 'approved' || state.reviewDecision === 'not-required' ? 'passing' : 'failing'
   const conflictState: RequirementState = !state || state.mergeable === 'unknown' ? 'unknown' : state.mergeable === 'mergeable' ? 'passing' : 'failing'
   const prNumber = state?.number ?? merge.data?.number ?? number
@@ -102,6 +117,17 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange }: {
         <p>{state.headRef} → {state.baseRef} · {state.state}{state.isDraft ? ' · draft' : ''}</p>
         {wrongVersion ? <p role="alert" className="text-danger">The PR commit differs from this task version. Review the updated task before merging.</p> : null}
         {wrongBase ? <p role="alert" className="text-danger">This PR targets {state.baseRef}. It must target main before using this action.</p> : null}
+        {openPr && wrongVersion && !wrongBase ? <div className="grid gap-2 rounded-md border border-border bg-card p-3 text-xs">
+          <p><span className="font-medium">This PR has moved to a new version.</span> <span className="text-soft-foreground">Review its updated changes above, then merge {state.headSha.slice(0, 8)} instead of {commit.slice(0, 8)}.</span></p>
+          <div><Button size="sm" variant="outline" onClick={() => onAdoptCommit(state.headSha)}>Review updated version</Button></div>
+        </div> : null}
+        {conflicting ? <div className="grid gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs">
+          <p className="font-medium">Conflicts with main must be resolved first.</p>
+          {agent.blockedBy
+            ? <p className="text-soft-foreground">{agent.reason ?? 'The agent cannot be reached.'} Resolve them on GitHub, then Refresh.</p>
+            : <><p className="text-soft-foreground">The task&apos;s agent can resolve them and push. Reopen this dialog after it finishes.</p>
+              <div><Button size="sm" disabled={resolving || agent.isPending} onClick={() => { void resolve() }}>{resolving || agent.isPending ? 'Sending…' : `Resolve conflicts in PR #${number}`}</Button></div></>}
+        </div> : null}
         {openPr && !mismatched ? <ul className="grid gap-2 text-sm">
           <li className="flex items-center gap-2"><RequirementIcon state={reviewState} /><span>Reviews: {state.reviewDecision.replaceAll('-', ' ')}</span></li>
           <li className="flex items-center gap-2"><RequirementIcon state={conflictState} /><span>Conflicts: {state.mergeable === 'conflicting' ? 'present' : state.mergeable === 'mergeable' ? 'none' : 'unknown'}</span></li>
@@ -110,7 +136,7 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange }: {
         </ul> : null}
         {state.blockers.map(blocker => <p key={blocker.code}>{blocker.message}</p>)}
         {openPr && state.canOverride && !mismatched ? <label className="flex cursor-pointer items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs"><input type="checkbox" checked={overrideRules} onChange={e => setOverrideRules(e.target.checked)} className="mt-0.5 size-4 accent-primary" /><span><span className="block font-medium">Merge without waiting for requirements</span><span className="mt-0.5 block text-soft-foreground">GitHub will allow this only if your permissions can bypass the repository rules.</span></span></label> : null}
-        {openPr && !mismatched && state.methods.length ? <label className="grid gap-1">Merge method<select aria-label="Merge method" className="rounded border border-border bg-background p-2 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50" value={selected ?? ''} onChange={e => setMethod(e.target.value as GithubMergeMethod)}>{state.methods.map(value => <option key={value} value={value}>{methodLabel(value)}</option>)}</select></label> : null}
+        {openPr && !mismatched && !conflicting && state.methods.length ? <label className="grid gap-1">Merge method<select aria-label="Merge method" className="rounded border border-border bg-background p-2 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50" value={selected ?? ''} onChange={e => setMethod(e.target.value as GithubMergeMethod)}>{state.methods.map(value => <option key={value} value={value}>{methodLabel(value)}</option>)}</select></label> : null}
       </div> : null}
       {create.error || merge.error ? <p role="alert" className="text-danger">{create.error?.message ?? merge.error?.message}</p> : null}
       <DialogFooter>

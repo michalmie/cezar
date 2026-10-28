@@ -1,14 +1,23 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, fireEvent, within, act } from '@testing-library/react'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ApiRun } from '@open-mercato/cezar-api-client'
 import { getFeaturePreview, createRunPr, getGithubPrMergeState, mergeGithubPr } from '@/api/client'
+import { toast } from '@/components/ui/toaster'
 import { FeaturePreviewButton } from './feature-preview-button'
+import { useAskAnswer, type AskAnswerDelivery } from './ask-answer'
 import { MemoryRouter } from 'react-router'
 
 vi.mock('@/api/client', () => ({ getFeaturePreview: vi.fn(), createRunPr: vi.fn(), getGithubPrMergeState: vi.fn(), mergeGithubPr: vi.fn() }))
+vi.mock('./ask-answer', () => ({ useAskAnswer: vi.fn() }))
+vi.mock('@/components/ui/toaster', () => ({ toast: vi.fn() }))
 const taskId = 'a1234567-1234-4123-8123-123456789abc'
 const run: ApiRun = { id: taskId, title: 'Feature', workflow: 'quick-task', task: 'Feature', status: 'done', createdAt: '', tokensUsed: 0, steps: [], archived: false }
+const send = vi.fn()
+beforeEach(() => {
+  send.mockResolvedValue(undefined)
+  vi.mocked(useAskAnswer).mockReturnValue({ mode: 'live', isPending: false, send } as AskAnswerDelivery)
+})
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 function show(task = run, search = '') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -127,6 +136,44 @@ it('names a closed PR without offering a merge', async () => {
   await within(dialog).findByRole('heading', { name: 'Pull request closed' })
   expect(within(dialog).queryByRole('button', { name: 'Merge PR into main' })).toBeNull()
   expect(mergeGithubPr).not.toHaveBeenCalled()
+})
+it('sends conflict resolution to the agent instead of offering a merge', async () => {
+  const conflicted = { ...ready, mergeable: 'conflicting' as const, eligibility: 'blocked' as const, blockers: [{ code: 'conflicts', message: 'Conflicts must be resolved before merging.' }], canMerge: false, canOverride: false }
+  available(); vi.mocked(getGithubPrMergeState).mockResolvedValue({ available: true, mergeState: conflicted })
+  show({ ...run, pullRequestUrl: ready.url }, `?featureAction=merge&commit=${commit}&number=9`)
+  const dialog = await screen.findByRole('dialog')
+  await within(dialog).findByRole('link', { name: 'Review PR #9 ↗' })
+  expect(within(dialog).queryByRole('button', { name: 'Merge PR into main' })).toBeNull()
+  expect(within(dialog).queryByLabelText('Merge method')).toBeNull()
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Resolve conflicts in PR #9' }))
+  await vi.waitFor(() => expect(send).toHaveBeenCalledWith('Resolve conflicts in PR 9'))
+  expect(toast).toHaveBeenCalledWith('Resolving conflicts in PR #9 — reopen Merge when the agent pushes.')
+  await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  expect(mergeGithubPr).not.toHaveBeenCalled()
+})
+it('explains when the agent cannot resolve conflicts', async () => {
+  const conflicted = { ...ready, mergeable: 'conflicting' as const, eligibility: 'blocked' as const, blockers: [{ code: 'conflicts', message: 'Conflicts must be resolved before merging.' }], canMerge: false, canOverride: false }
+  available(); vi.mocked(getGithubPrMergeState).mockResolvedValue({ available: true, mergeState: conflicted })
+  vi.mocked(useAskAnswer).mockReturnValue({ mode: 'unavailable', blockedBy: 'provider', reason: 'no engine is connected', isPending: false, send } as AskAnswerDelivery)
+  show({ ...run, pullRequestUrl: ready.url }, `?featureAction=merge&commit=${commit}&number=9`)
+  const dialog = await screen.findByRole('dialog')
+  await within(dialog).findByText(/no engine is connected/)
+  expect(within(dialog).queryByRole('button', { name: /Resolve conflicts/ })).toBeNull()
+  expect(send).not.toHaveBeenCalled()
+})
+it('adopts the reviewed new head after the PR moves', async () => {
+  const moved = 'b'.repeat(40)
+  available(); vi.mocked(getGithubPrMergeState).mockResolvedValue({ available: true, mergeState: { ...ready, headSha: moved } })
+  vi.mocked(mergeGithubPr).mockResolvedValue({ merged: true, number: 9, url: ready.url, method: 'squash' })
+  show({ ...run, pullRequestUrl: ready.url }, `?featureAction=merge&commit=${commit}&number=9`)
+  const dialog = await screen.findByRole('dialog')
+  await within(dialog).findByRole('link', { name: 'Review PR #9 ↗' })
+  expect(within(dialog).queryByRole('button', { name: 'Merge PR into main' })).toBeNull()
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Review updated version' }))
+  const button = await within(screen.getByRole('dialog')).findByRole('button', { name: 'Merge PR into main' })
+  await vi.waitFor(() => expect(button.hasAttribute('disabled')).toBe(false))
+  fireEvent.click(button)
+  await vi.waitFor(() => expect(mergeGithubPr).toHaveBeenCalledWith(9, { method: 'squash', expectedHeadSha: moved, expectedBaseRef: 'main', overrideRules: false }))
 })
 it('keeps a GitHub preview link pinned while task discovery refreshes', async () => {
   available(); const { client } = show(run, `?featureAction=preview&commit=${commit}&number=9`)
