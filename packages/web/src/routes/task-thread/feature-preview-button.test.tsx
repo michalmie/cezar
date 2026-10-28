@@ -101,6 +101,15 @@ it.each([{ ...ready, baseRef: 'develop', canMerge: false, canOverride: true }, {
   expect(within(dialog).queryByRole('button', { name: 'Merge PR into main' })).toBeNull()
   expect(mergeGithubPr).not.toHaveBeenCalled()
 })
+it('shows a waiting loader while GitHub mergeability is unknown', async () => {
+  const waiting = { ...ready, mergeable: 'unknown' as const, reviewDecision: 'not-required' as const, eligibility: 'unknown' as const, blockers: [{ code: 'unknown', message: 'GitHub could not confirm every merge requirement.' }], canMerge: false, canOverride: true }
+  available(); vi.mocked(getGithubPrMergeState).mockResolvedValue({ available: true, mergeState: waiting })
+  show({ ...run, pullRequestUrl: ready.url }, `?featureAction=merge&commit=${commit}&number=9`)
+  const dialog = await screen.findByRole('dialog')
+  await within(dialog).findByText('Conflicts: waiting for an update from GitHub…')
+  expect(within(dialog).getByRole('button', { name: 'Merge PR into main' }).hasAttribute('disabled')).toBe(true)
+  expect(mergeGithubPr).not.toHaveBeenCalled()
+})
 it('shows an unmistakable success state after merging', async () => {
   available(); vi.mocked(getGithubPrMergeState).mockResolvedValue({ available: true, mergeState: ready })
   vi.mocked(mergeGithubPr).mockResolvedValue({ merged: true, number: 9, url: ready.url, method: 'squash', mergeCommitSha: 'c'.repeat(40) })
@@ -110,7 +119,7 @@ it('shows an unmistakable success state after merging', async () => {
   await vi.waitFor(() => expect(button.hasAttribute('disabled')).toBe(false))
   fireEvent.click(button)
   await within(dialog).findByRole('heading', { name: 'Merged into main' })
-  expect(within(dialog).getByRole('status').textContent).toContain('PR #9 is now on main.')
+  expect(within(dialog).getByRole('status').textContent).toContain('PR #9 merged into main.')
   expect(within(dialog).getByRole('status').textContent).toContain(`Merge commit ${'c'.repeat(8)}`)
   expect(within(dialog).queryByRole('button', { name: 'Merge PR into main' })).toBeNull()
   expect(within(dialog).queryByLabelText('Merge method')).toBeNull()

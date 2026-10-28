@@ -103,10 +103,10 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange, onAdoptCom
       {number && status.isPending ? <p role="status">Loading PR merge requirements…</p> : null}
       {number && status.data?.available === false ? <p role="alert">{status.data.reason}</p> : null}
       {status.error ? <p role="alert">{status.error.message}</p> : null}
-      {showSuccess ? <div role="status" className="flex items-start gap-3 rounded-lg border border-success/40 bg-success/5 p-4">
-        <CircleCheckIcon aria-hidden="true" className="size-8 shrink-0 text-success" />
+      {showSuccess ? <div role="status" className="flex items-start gap-4 rounded-lg border border-success/50 bg-success/10 p-5">
+        <CircleCheckIcon aria-hidden="true" className="size-10 shrink-0 text-success" />
         <div className="grid min-w-0 gap-1 text-sm">
-          <p className="font-semibold">PR #{prNumber} is now on main.</p>
+          <p className="text-lg font-semibold">PR #{prNumber} merged into main.</p>
           {state ? <p className="text-soft-foreground">{state.headRef} → {state.baseRef}</p> : null}
           <p className="break-all font-mono text-xs" title={commit}>Version {commit.slice(0, 8)}{merge.data?.mergeCommitSha ? ` · Merge commit ${merge.data.mergeCommitSha.slice(0, 8)}` : ''}</p>
           {prUrl ? <a href={prUrl} target="_blank" rel="noopener noreferrer" className="underline">View PR #{prNumber} ↗</a> : null}
@@ -130,7 +130,7 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange, onAdoptCom
         </div> : null}
         {openPr && !mismatched ? <ul className="grid gap-2 text-sm">
           <li className="flex items-center gap-2"><RequirementIcon state={reviewState} /><span>Reviews: {state.reviewDecision.replaceAll('-', ' ')}</span></li>
-          <li className="flex items-center gap-2"><RequirementIcon state={conflictState} /><span>Conflicts: {state.mergeable === 'conflicting' ? 'present' : state.mergeable === 'mergeable' ? 'none' : 'unknown'}</span></li>
+          <li className="flex items-center gap-2"><RequirementIcon state={state.mergeable === 'unknown' ? 'pending' : conflictState} /><span>Conflicts: {state.mergeable === 'conflicting' ? 'present' : state.mergeable === 'mergeable' ? 'none' : 'waiting for an update from GitHub…'}</span></li>
           {state.checks.length === 0 && state.checksTier !== 'none' ? <li>No checks configured</li> : state.checks.map(check => <li key={check.name} className="flex items-center justify-between gap-3"><span className="flex min-w-0 items-center gap-2"><RequirementIcon state={check.state} /><span>{check.name} · {check.state}{check.required === true ? ' · required' : check.required === null ? ' · requiredness unknown' : ''}</span></span>{check.url ? <a href={check.url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-muted-foreground underline">details</a> : null}</li>)}
           {state.checksTier !== 'detailed' ? <li className="flex items-start gap-2"><RequirementIcon state="unknown" /><span>{state.checksTier === 'aggregate' ? 'Only the rolled-up check state is readable here — per-check detail is not.' : 'This token cannot read the checks on this pull request.'}{state.checksReason ? ` ${state.checksReason}` : ''}</span></li> : null}
         </ul> : null}
