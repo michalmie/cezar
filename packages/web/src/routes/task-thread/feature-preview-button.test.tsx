@@ -175,6 +175,16 @@ it('adopts the reviewed new head after the PR moves', async () => {
   fireEvent.click(button)
   await vi.waitFor(() => expect(mergeGithubPr).toHaveBeenCalledWith(9, { method: 'squash', expectedHeadSha: moved, expectedBaseRef: 'main', overrideRules: false }))
 })
+it('links each check to its GitHub Actions run when a URL is available', async () => {
+  const withChecks = { ...ready, canMerge: false, canOverride: true, eligibility: 'pending' as const, blockers: [{ code: 'pending', message: 'Checks or GitHub mergeability are still pending.' }], checks: [{ name: 'checks', state: 'pending' as const, required: true, url: 'https://github.com/acme/demo/actions/runs/1/job/2' }, { name: 'lint', state: 'passing' as const, required: false }] }
+  available(); vi.mocked(getGithubPrMergeState).mockResolvedValue({ available: true, mergeState: withChecks })
+  show({ ...run, pullRequestUrl: ready.url }, `?featureAction=merge&commit=${commit}&number=9`)
+  const dialog = await screen.findByRole('dialog')
+  await within(dialog).findByRole('link', { name: 'Review PR #9 ↗' })
+  const details = within(dialog).getByRole('link', { name: 'details' })
+  expect(details.getAttribute('href')).toBe('https://github.com/acme/demo/actions/runs/1/job/2')
+  expect(details.getAttribute('target')).toBe('_blank')
+})
 it('keeps a GitHub preview link pinned while task discovery refreshes', async () => {
   available(); const { client } = show(run, `?featureAction=preview&commit=${commit}&number=9`)
   const dialog = await screen.findByRole('dialog')
