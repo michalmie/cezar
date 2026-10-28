@@ -3540,6 +3540,112 @@ describe('fetchPrMergeState and an unreadable statusCheckRollup (#969)', () => {
   });
 });
 
+describe('updatePullRequestBranch', () => {
+  const repoRef = { owner: 'acme', repo: 'demo' };
+  const headSha = 'b'.repeat(40);
+  const corePr = {
+    number: 353,
+    title: 'Ship it',
+    url: 'https://github.com/acme/demo/pull/353',
+    state: 'OPEN',
+    isDraft: false,
+    headRefName: 'feat/ship',
+    baseRefName: 'main',
+    headRefOid: headSha,
+    mergeable: 'MERGEABLE',
+    mergeStateStatus: 'BEHIND',
+    reviewDecision: null,
+  };
+  const policy = { allow_merge_commit: false, allow_squash_merge: true, allow_rebase_merge: false };
+
+  function routeUpdate(routes: {
+    core?: () => unknown;
+    update?: () => unknown;
+  }) {
+    const calls: string[] = [];
+    execFileMock.mockImplementation((...args: unknown[]) => {
+      const argv = args[1] as string[];
+      const cb = args[args.length - 1] as (e: unknown, r: unknown) => void;
+      calls.push(argv.join(' '));
+      const answer = (produce: () => unknown) => {
+        let value: unknown;
+        try {
+          value = produce();
+        } catch (err) {
+          return cb(err, { stdout: '', stderr: '' });
+        }
+        return cb(null, { stdout: typeof value === 'string' ? value : JSON.stringify(value), stderr: '' });
+      };
+      if (argv[0] === 'pr' && argv[1] === 'view') {
+        const fields = argv[argv.indexOf('--json') + 1] ?? '';
+        if (fields === 'statusCheckRollup') return answer(() => ({ statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] }));
+        return answer(routes.core ?? (() => corePr));
+      }
+      if (argv[0] === 'api' && argv[1] === '--method') return answer(routes.update ?? (() => ({ message: 'Updating pull request branch.' })));
+      if (argv[0] === 'api' && (argv[1] ?? '').includes('/protection/')) {
+        return answer(() => ({ strict: true, contexts: ['ci'], checks: [] }));
+      }
+      if (argv[0] === 'api') return answer(() => policy);
+      return cb(new Error(`unexpected gh ${argv.join(' ')}`), null);
+    });
+    return calls;
+  }
+
+  beforeEach(() => {
+    vi.stubEnv('CEZ_DRY_RUN', '');
+    execFileMock.mockReset();
+    __clearMergeStateCacheForTests();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const update = (head = headSha) =>
+    createGithubDriver('/repo/update', repoRef).updatePRBranch!(353, { expectedHeadSha: head });
+
+  it('sends the branch update with the expected head and reports success', async () => {
+    const calls = routeUpdate({});
+    const result = await update();
+    expect(result).toEqual({ updated: true, number: 353, url: corePr.url });
+    expect(calls).toContain(`api --method PUT repos/acme/demo/pulls/353/update-branch -f expected_head_sha=${headSha}`);
+  });
+
+  it('refuses a moved head with the fresh state instead of updating', async () => {
+    const calls = routeUpdate({});
+    const result = await update('a'.repeat(40));
+    expect(result).toMatchObject({ updated: false, status: 409, code: 'stale-head' });
+    expect((result as { current?: { headSha: string } }).current?.headSha).toBe(headSha);
+    expect(calls.some((call) => call.includes('update-branch'))).toBe(false);
+  });
+
+  it('refuses a closed pull request without updating', async () => {
+    const calls = routeUpdate({ core: () => ({ ...corePr, state: 'CLOSED' }) });
+    const result = await update();
+    expect(result).toMatchObject({ updated: false, status: 409, code: 'terminal' });
+    expect(calls.some((call) => call.includes('update-branch'))).toBe(false);
+  });
+
+  it('surfaces GitHub\u2019s refusal message when the update is rejected', async () => {
+    const stderr = 'gh: Pull request is not mergeable (HTTP 422)\n';
+    routeUpdate({
+      update: () => {
+        throw Object.assign(new Error(`Command failed: gh api --method PUT repos/acme/demo/pulls/353/update-branch\n${stderr}`), {
+          code: 1,
+          stdout: JSON.stringify({ message: 'Pull request is not mergeable', status: '422' }),
+          stderr,
+        });
+      },
+    });
+    const result = await update();
+    expect(result).toEqual({
+      updated: false,
+      status: 409,
+      code: 'github-blocked',
+      error: 'GitHub refused the branch update: Pull request is not mergeable.',
+    });
+  });
+});
+
 describe('whyLine', () => {
   it('skips the "Command failed" preamble and reports what actually went wrong', () => {
     expect(

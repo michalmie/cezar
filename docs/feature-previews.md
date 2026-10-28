@@ -16,8 +16,8 @@ PR and requirements. **Reviews: not required** is valid when GitHub confirms
 there is no review requirement; unreadable requirements block merging until the
 operator explicitly confirms **Merge without waiting for requirements**. GitHub
 remains authoritative and may still refuse. A branch that fell behind its target
-stays blocked while protection demands an up-to-date branch; update it on
-GitHub, then Refresh. A merged PR shows a confirmation
+stays blocked while protection demands an up-to-date branch; Update branch
+merges the target into it and re-runs the checks in place. A merged PR shows a confirmation
 with the merge commit instead of the requirements. A conflicting PR offers
 **Resolve conflicts in PR #N** instead of merge controls, asking the task's
 agent to resolve and push; when the PR moves to a new version, **Review

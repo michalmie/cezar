@@ -2,13 +2,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, fireEvent, within, act } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ApiRun } from '@open-mercato/cezar-api-client'
-import { getFeaturePreview, createRunPr, getGithubPrMergeState, mergeGithubPr } from '@/api/client'
+import { getFeaturePreview, createRunPr, getGithubPrMergeState, mergeGithubPr, updateGithubPrBranch } from '@/api/client'
 import { toast } from '@/components/ui/toaster'
 import { FeaturePreviewButton } from './feature-preview-button'
 import { useAskAnswer, type AskAnswerDelivery } from './ask-answer'
 import { MemoryRouter } from 'react-router'
 
-vi.mock('@/api/client', () => ({ getFeaturePreview: vi.fn(), createRunPr: vi.fn(), getGithubPrMergeState: vi.fn(), mergeGithubPr: vi.fn() }))
+vi.mock('@/api/client', () => ({ getFeaturePreview: vi.fn(), createRunPr: vi.fn(), getGithubPrMergeState: vi.fn(), mergeGithubPr: vi.fn(), updateGithubPrBranch: vi.fn() }))
 vi.mock('./ask-answer', () => ({ useAskAnswer: vi.fn() }))
 vi.mock('@/components/ui/toaster', () => ({ toast: vi.fn() }))
 const taskId = 'a1234567-1234-4123-8123-123456789abc'
@@ -67,6 +67,38 @@ it('withholds merging until overridden when GitHub requirements differ', async (
   await within(dialog).findByRole('link', { name: 'Review PR #9 ↗' })
   expect(within(dialog).getByRole('button', { name: 'Merge PR into main' }).hasAttribute('disabled')).toBe(true)
   expect(mergeGithubPr).not.toHaveBeenCalled()
+})
+const behindMessage = 'This branch is behind main. Update it with the latest from main, then merge.'
+const behind = { ...ready, eligibility: 'blocked' as const, blockers: [{ code: 'behind', message: behindMessage }], canMerge: false, canOverride: true }
+it('offers a branch update when the branch is behind its target', async () => {
+  available(); vi.mocked(getGithubPrMergeState).mockResolvedValue({ available: true, mergeState: behind })
+  vi.mocked(updateGithubPrBranch).mockResolvedValue({ updated: true, number: 9, url: ready.url })
+  show({ ...run, pullRequestUrl: ready.url }, `?featureAction=merge&commit=${commit}&number=9`)
+  const dialog = await screen.findByRole('dialog')
+  await within(dialog).findByText(behindMessage)
+  const button = within(dialog).getByRole('button', { name: 'Update branch' })
+  expect(mergeGithubPr).not.toHaveBeenCalled()
+  fireEvent.click(button)
+  await vi.waitFor(() => expect(updateGithubPrBranch).toHaveBeenCalledWith(9, { expectedHeadSha: commit }))
+  await vi.waitFor(() => expect(getGithubPrMergeState).toHaveBeenCalledTimes(2))
+})
+it('surfaces a refused branch update without merging', async () => {
+  available(); vi.mocked(getGithubPrMergeState).mockResolvedValue({ available: true, mergeState: behind })
+  vi.mocked(updateGithubPrBranch).mockRejectedValue(new Error('GitHub refused the branch update: Pull request is not mergeable.'))
+  show({ ...run, pullRequestUrl: ready.url }, `?featureAction=merge&commit=${commit}&number=9`)
+  const dialog = await screen.findByRole('dialog')
+  await within(dialog).findByText(behindMessage)
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Update branch' }))
+  await within(dialog).findByText('GitHub refused the branch update: Pull request is not mergeable.')
+  expect(mergeGithubPr).not.toHaveBeenCalled()
+})
+it('hides the update action once the head moves, but still names the behind state', async () => {
+  available(); vi.mocked(getGithubPrMergeState).mockResolvedValue({ available: true, mergeState: { ...behind, headSha: 'b'.repeat(40) } })
+  show({ ...run, pullRequestUrl: ready.url }, `?featureAction=merge&commit=${commit}&number=9`)
+  const dialog = await screen.findByRole('dialog')
+  await within(dialog).findByRole('link', { name: 'Review PR #9 ↗' })
+  expect(within(dialog).queryByRole('button', { name: 'Update branch' })).toBeNull()
+  expect(within(dialog).getByText(behindMessage)).toBeTruthy()
 })
 it.each([{ ...ready, baseRef: 'develop' }, { ...ready, headSha: 'b'.repeat(40) }])('hides merge controls when the base or commit differ', async state => {
   available(); vi.mocked(getGithubPrMergeState).mockResolvedValue({ available: true, mergeState: state })

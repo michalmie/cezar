@@ -378,6 +378,22 @@ export const githubMergeResponseSchema = z.object({
 });
 export type GithubMergeResponse = z.infer<typeof githubMergeResponseSchema>;
 
+export const githubPrUpdateBranchRequestSchema = z.object({
+  expectedHeadSha: z.string().regex(/^[0-9a-f]{40}$/),
+}).strict();
+export type GithubPrUpdateBranchRequest = z.input<typeof githubPrUpdateBranchRequestSchema>;
+
+/**
+ * `POST /api/v1/github/prs/:number/update-branch` — the 200 branch only, shaped like the
+ * merge response: refusals are `ApiError`s and `updated` stays pinned to `true`.
+ */
+export const githubPrUpdateBranchResponseSchema = z.object({
+  updated: z.literal(true),
+  number: z.number(),
+  url: z.string(),
+});
+export type GithubPrUpdateBranchResponse = z.infer<typeof githubPrUpdateBranchResponseSchema>;
+
 /** One changed file of a pull request's diff. */
 export const githubPrChangeSchema = z.object({
   path: z.string(),

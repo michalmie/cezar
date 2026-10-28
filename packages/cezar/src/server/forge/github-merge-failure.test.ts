@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ghMergeFailure } from './github.ts';
+import { ghMergeFailure, ghUpdateBranchFailure } from './github.ts';
 
 const ARGV = 'gh api --method PUT repos/acme/demo/pulls/128/merge -f merge_method=squash -f sha=0123456789abcdef';
 const DOCS = 'https://docs.github.com/rest/pulls/pulls#merge-a-pull-request';
@@ -53,5 +53,30 @@ describe('ghMergeFailure', () => {
     });
     const killed = ghMergeFailure(Object.assign(new Error(`Command failed: ${ARGV}`), { killed: true, stdout: '', stderr: '' }));
     expect(killed).toEqual({ merged: false, status: 502, error: 'GitHub could not complete the merge.' });
+  });
+});
+
+describe('ghUpdateBranchFailure', () => {
+  it.each([
+    [409, 'Head branch was modified. Review and try the merge again.', 409, 'stale-head',
+      'GitHub refused the branch update: Head branch was modified. Review and try the merge again.'],
+    [422, 'Pull request is not mergeable', 409, 'github-blocked',
+      'GitHub refused the branch update: Pull request is not mergeable.'],
+    [403, 'Resource not accessible by integration', 403, undefined, 'GitHub permission denied: Resource not accessible by integration.'],
+    [404, 'Not Found', 404, undefined, 'Pull request or repository not found.'],
+    [502, 'Server Error', 502, undefined, 'GitHub could not update the branch: Server Error.'],
+  ])('maps HTTP %i "%s" to %i', (http, message, status, code, error) => {
+    const result = ghUpdateBranchFailure(ghApiError(http, message));
+    expect(result).toEqual({ updated: false, status, error, ...(code ? { code } : {}) });
+  });
+
+  it('keeps a transport failure a 502 with gh\'s reason, never the argv', () => {
+    const stderr = 'error connecting to api.github.com\n';
+    const result = ghUpdateBranchFailure(Object.assign(new Error(`Command failed: ${ARGV}\n${stderr}`), { stdout: '', stderr }));
+    expect(result).toEqual({
+      updated: false,
+      status: 502,
+      error: 'GitHub could not update the branch: error connecting to api.github.com.',
+    });
   });
 });

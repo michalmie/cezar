@@ -28,6 +28,8 @@ import type {
   ForgePrDiffResult,
   ForgeRefKind,
   ForgeRecentCreatedData,
+  ForgeUpdateBranchInput,
+  ForgeUpdateBranchResult,
   ForgeSearchData,
   ForgeTimelineEvent,
   ForgeTimelineEventKind,
@@ -3399,11 +3401,11 @@ export function evictGithubProjectCaches(repoRoot: string): void {
 const ghApiErrorBodySchema = z.object({ message: z.string(), status: z.union([z.string(), z.number()]).optional() });
 
 /**
- * A failed `PUT …/pulls/:n/merge`, as GitHub said it (telemetry a2c8474c). The old mapping read
- * Node's `Command failed: gh api …` line — the argv — so every refusal (rules, reviews, method,
- * a moved head) came out as one 502. GitHub's body is on stdout, `gh: <why> (HTTP n)` on stderr.
+ * What a failed `gh api` mutation came back with: GitHub's body is on stdout,
+ * `gh: <why> (HTTP n)` on stderr. Never Node's `Command failed: <argv>` preamble — it names
+ * the command, not the reason (telemetry a2c8474c).
  */
-export function ghMergeFailure(error: unknown): Extract<ForgeMergeResult, { merged: false }> {
+function ghApiFailureParts(error: unknown): { httpStatus: number; reason: string } {
   const io = (error ?? {}) as { stdout?: unknown; stderr?: unknown; message?: unknown };
   const stdout = typeof io.stdout === 'string' ? io.stdout : '';
   const stderr = ghStderr(error) ?? '';
@@ -3415,7 +3417,6 @@ export function ghMergeFailure(error: unknown): Extract<ForgeMergeResult, { merg
     // not a GitHub error body: gh failed before or without one
   }
   const httpStatus = Number(body?.status ?? stderr.match(/\(HTTP (\d{3})\)/)?.[1] ?? Number.NaN);
-  // Never Node's `Command failed: <argv>` preamble: it names the command, not the reason.
   const fallback = whyLine(stderr || (typeof io.message === 'string' ? io.message : ''));
   const said = (body?.message ?? (/^Command failed:|^gh failed$/i.test(fallback) ? '' : fallback))
     .replace(/^gh:\s*/, '')
@@ -3423,7 +3424,15 @@ export function ghMergeFailure(error: unknown): Extract<ForgeMergeResult, { merg
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 240);
-  const reason = said ? `: ${said.replace(/[.\s]+$/, '')}.` : '.';
+  return { httpStatus, reason: said ? `: ${said.replace(/[.\s]+$/, '')}.` : '.' };
+}
+
+/**
+ * A failed `PUT …/pulls/:n/merge`, as GitHub said it (telemetry a2c8474c). The old mapping read
+ * Node's argv line, so every refusal (rules, reviews, method, a moved head) came out as one 502.
+ */
+export function ghMergeFailure(error: unknown): Extract<ForgeMergeResult, { merged: false }> {
+  const { httpStatus, reason } = ghApiFailureParts(error);
   if (httpStatus === 403) return { merged: false, status: 403, error: `GitHub permission denied${reason}` };
   if (httpStatus === 404) return { merged: false, status: 404, error: 'Pull request or repository not found.' };
   // 409 is GitHub's "head branch was modified"; 405/422 are its precondition refusals.
@@ -3432,6 +3441,18 @@ export function ghMergeFailure(error: unknown): Extract<ForgeMergeResult, { merg
     return { merged: false, status: 409, error: `GitHub refused the merge${reason}`, code: 'github-blocked' };
   }
   return { merged: false, status: 502, error: `GitHub could not complete the merge${reason}` };
+}
+
+/** A failed `PUT …/pulls/:n/update-branch`, mapped on the same terms as a refused merge. */
+export function ghUpdateBranchFailure(error: unknown): Extract<ForgeUpdateBranchResult, { updated: false }> {
+  const { httpStatus, reason } = ghApiFailureParts(error);
+  if (httpStatus === 403) return { updated: false, status: 403, error: `GitHub permission denied${reason}` };
+  if (httpStatus === 404) return { updated: false, status: 404, error: 'Pull request or repository not found.' };
+  if (httpStatus === 409) return { updated: false, status: 409, error: `GitHub refused the branch update${reason}`, code: 'stale-head' };
+  if (httpStatus === 405 || httpStatus === 422) {
+    return { updated: false, status: 409, error: `GitHub refused the branch update${reason}`, code: 'github-blocked' };
+  }
+  return { updated: false, status: 502, error: `GitHub could not update the branch${reason}` };
 }
 
 async function mergePullRequest(
@@ -3474,6 +3495,46 @@ async function mergePullRequest(
     return { merged: true, number, url: current.url, method: input.method, ...(result.sha ? { mergeCommitSha: result.sha } : {}) };
   } catch (error) {
     return ghMergeFailure(error);
+  } finally {
+    mergeInflight.delete(key);
+  }
+}
+
+/** Merge the base branch into the PR head — the merge dialog's answer to a `behind` blocker.
+ *  The guards mirror the merge preflight; whether the update unblocks anything is GitHub's
+ *  call, so a branch that is no longer behind still updates instead of refusing. */
+export async function updatePullRequestBranch(
+  repoRoot: string,
+  repoRef: GithubRepoRef | null,
+  number: number,
+  input: ForgeUpdateBranchInput,
+): Promise<ForgeUpdateBranchResult> {
+  const key = `${repoRoot}:${number}`;
+  if (mergeInflight.has(key)) return { updated: false, status: 409, error: 'A merge is already in progress.', code: 'concurrent' };
+  mergeInflight.add(key);
+  try {
+    const fresh = await fetchPrMergeState(repoRoot, repoRef, number, true);
+    if (!fresh.available) return { updated: false, status: 502, error: fresh.reason };
+    const current = fresh.mergeState;
+    if (current.state !== 'open') {
+      return { updated: false, status: 409, error: 'The pull request is no longer open.', code: 'terminal', current };
+    }
+    if (current.headSha !== input.expectedHeadSha) {
+      return { updated: false, status: 409, error: 'The pull request head changed. Review the new commits before updating.', code: 'stale-head', current };
+    }
+    if (process.env.CEZ_DRY_RUN === '1') {
+      evictGithubProjectCaches(repoRoot);
+      return { updated: true, number, url: current.url };
+    }
+    if (!repoRef) return { updated: false, status: 404, error: 'GitHub repository not found.' };
+    await gh(repoRoot, [
+      'api', '--method', 'PUT', `repos/${repoRef.owner}/${repoRef.repo}/pulls/${number}/update-branch`,
+      '-f', `expected_head_sha=${input.expectedHeadSha}`,
+    ]);
+    evictGithubProjectCaches(repoRoot);
+    return { updated: true, number, url: current.url };
+  } catch (error) {
+    return ghUpdateBranchFailure(error);
   } finally {
     mergeInflight.delete(key);
   }
@@ -3539,6 +3600,8 @@ export function createGithubDriver(repoRoot: string, repoRef: GithubRepoRef | nu
     prMergeState: (number, opts) => fetchPrMergeState(repoRoot, repoRef, number, opts?.refresh),
 
     mergePR: (number, input) => mergePullRequest(repoRoot, repoRef, number, input),
+
+    updatePRBranch: (number, input) => updatePullRequestBranch(repoRoot, repoRef, number, input),
 
     viewUrl: (kind: ForgeRefKind, ref: string | number): string | null => {
       if (!repoRef) return null;

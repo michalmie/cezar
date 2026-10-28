@@ -1,5 +1,5 @@
 import { projectTriggerSchema } from '@open-mercato/cezar-contract';
-import { featurePreviewParamsSchema, createPrRequestSchema, githubMergeRequestSchema } from '@open-mercato/cezar-contract';
+import { featurePreviewParamsSchema, createPrRequestSchema, githubMergeRequestSchema, githubPrUpdateBranchRequestSchema } from '@open-mercato/cezar-contract';
 import { featurePreview } from './feature-preview.ts';
 import { createWebhookRoutes } from './webhooks.ts';
 import { WebhookCoordinator } from '../webhooks/coordinator.ts';
@@ -6960,6 +6960,34 @@ export function createApp(deps: ServerDeps) {
       },
     )
 
+    .post(
+      '/github/prs/:number/update-branch',
+      paramZodValidator(mergeNumberParams, { message: 'invalid pull request number' }),
+      jsonZodValidator(() => updateBranchBodySchema, { message: 'invalid update-branch request' }),
+      async (c) => {
+        const { root: repoRoot } = c.get('project');
+        const parsedNumber = { data: c.req.valid('param') };
+        const body = { data: c.req.valid('json') };
+        const forge = resolveForge(await getRepoInfo(repoRoot));
+        if (!forge?.updatePRBranch) return c.json({ error: 'GitHub branch update is unavailable' }, 409);
+        const result = await forge.updatePRBranch(parsedNumber.data.number, body.data);
+        if (result.updated) {
+          // The head just moved, so the ref-status cache holds the pre-update row — forget it
+          // the way the merge route does, or chips keep showing yesterday's status for a minute.
+          forgetRefStatus(repoRoot, parsedNumber.data.number);
+          return c.json(result);
+        }
+        return c.json(
+          {
+            error: result.error,
+            ...(result.code ? { code: result.code } : {}),
+            ...(result.current ? { current: result.current } : {}),
+          },
+          result.status,
+        );
+      },
+    )
+
     .get(
       '/github/prs/:number/changes',
       // Split out of one `safeParse` over both inputs, because a path param and the query string
@@ -6990,6 +7018,7 @@ export function createApp(deps: ServerDeps) {
     number: z.coerce.number().int().positive(),
   });
   const mergeBodySchema = githubMergeRequestSchema;
+  const updateBranchBodySchema = githubPrUpdateBranchRequestSchema;
 
   // Task branches are never a base: hide the named ones (no `cez/` prefix) by record. An in-place
   // run's branch is the user's own checkout, so it stays listed.

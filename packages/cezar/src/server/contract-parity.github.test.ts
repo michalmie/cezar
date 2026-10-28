@@ -10,6 +10,7 @@ import type {
   githubMergeResponseSchema,
   githubPrChangesDataSchema,
   githubPrMergeStateResponseSchema,
+  githubPrUpdateBranchResponseSchema,
   githubRefStatusDataSchema,
 } from '@open-mercato/cezar-contract';
 import type {
@@ -62,6 +63,10 @@ describe('src/contract github + repo schemas match the routes exactly', () => {
   >;
   type GithubMerge200 = InferResponseType<
     (typeof client.api.v1.github.prs)[':number']['merge']['$post'],
+    200
+  >;
+  type GithubUpdateBranch200 = InferResponseType<
+    (typeof client.api.v1.github.prs)[':number']['update-branch']['$post'],
     200
   >;
   type GithubPrChanges200 = InferResponseType<
@@ -118,6 +123,7 @@ describe('src/contract github + repo schemas match the routes exactly', () => {
     Assert<Exact<z.infer<typeof githubRefStatusDataSchema>, GithubRefStatus200>>,
     Assert<Exact<z.infer<typeof githubPrMergeStateResponseSchema>, GithubMergeState200>>,
     Assert<Exact<z.infer<typeof githubMergeResponseSchema>, GithubMerge200>>,
+    Assert<Exact<z.infer<typeof githubPrUpdateBranchResponseSchema>, GithubUpdateBranch200>>,
     Assert<Exact<z.infer<typeof githubPrChangesDataSchema>, GithubPrChanges200>>,
     Assert<Exact<z.infer<typeof repoResponseSchema>, Repo200>>,
     Assert<Exact<z.infer<typeof repoBranchResponseSchema>, RepoBranch200>>,

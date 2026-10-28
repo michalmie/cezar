@@ -1,5 +1,5 @@
 import { deferredAlreadyStartedSchema, trackerReadScope, resolveApiUrl, workspaceBrandingLogoResponseSchema } from '@open-mercato/cezar-api-client'
-import type { FeaturePreviewResponse, CreatePrRequest, GithubMergeRequest } from '@open-mercato/cezar-api-client'
+import type { FeaturePreviewResponse, CreatePrRequest, GithubMergeRequest, GithubPrUpdateBranchRequest, GithubPrUpdateBranchResponse } from '@open-mercato/cezar-api-client'
 import type { TaskActionSurface, TrackerAutomationOptions } from '@open-mercato/cezar-api-client'
 import type { z } from 'zod'
 import type {
@@ -1230,6 +1230,19 @@ export async function mergeGithubPr(
       json: input,
     }),
     '/github/prs/:number/merge',
+  )
+}
+
+export async function updateGithubPrBranch(
+  number: number,
+  input: GithubPrUpdateBranchRequest,
+): Promise<GithubPrUpdateBranchResponse> {
+  return unwrap(
+    await cez.api.v1.p[':projectId'].github.prs[':number']['update-branch'].$post({
+      param: { projectId: queryScope(), number: String(number) },
+      json: input,
+    }),
+    '/github/prs/:number/update-branch',
   )
 }
 

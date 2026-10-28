@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CircleCheckIcon, CircleIcon, CircleXIcon, LoaderCircleIcon } from 'lucide-react'
 import { useState } from 'react'
 import type { ApiRun, GithubMergeMethod } from '@open-mercato/cezar-api-client'
-import { createRunPr, getGithubPrMergeState, mergeGithubPr } from '@/api/client'
+import { createRunPr, getGithubPrMergeState, mergeGithubPr, updateGithubPrBranch } from '@/api/client'
 import { useProjectScope } from '@/api/project-scope-context'
 import { queryKeys } from '@/api/queries'
 import { Button } from '@/components/ui/button'
@@ -65,13 +65,23 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange, onAdoptCom
     onSuccess: () => { void status.refetch(); void client.invalidateQueries({ queryKey: queryKeys.runs.all }) },
     onError: () => { void status.refetch() },
   })
+  const update = useMutation({
+    mutationFn: () => {
+      if (!number || !state || mismatched || !state.blockers.some(blocker => blocker.code === 'behind')) throw new Error('This pull request is not waiting for a branch update.')
+      return updateGithubPrBranch(number, { expectedHeadSha: commit })
+    },
+    onSuccess: () => { void status.refetch(); void client.invalidateQueries({ queryKey: queryKeys.runs.all }) },
+    onError: () => { void status.refetch() },
+  })
   const agent = useAskAnswer(run, undefined, 'git_step')
   const [resolving, setResolving] = useState(false)
-  const busy = create.isPending || merge.isPending || resolving
+  const busy = create.isPending || merge.isPending || resolving || update.isPending
   // Server truth first; the fresh mutation covers the refetch gap. Reset on close so a reopen never replays a stale success.
   const showSuccess = Boolean(!mismatched && (merge.isSuccess || state?.state === 'merged'))
   const openPr = state?.state === 'open'
   const conflicting = Boolean(openPr && state?.mergeable === 'conflicting')
+  const behindBlocker = state?.blockers.find(blocker => blocker.code === 'behind')
+  const behindBox = Boolean(openPr && !mismatched && behindBlocker)
   const showMergeAction = !state || (openPr && !mismatched && !conflicting)
   const title = showSuccess ? 'Merged into main' : state?.state === 'closed' ? 'Pull request closed' : state?.state === 'merged' ? 'Already merged' : 'Merge PR into main'
   const description = showSuccess
@@ -81,7 +91,7 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange, onAdoptCom
       : state?.state === 'merged'
         ? 'This pull request is merged, but not at this task\u2019s selected version.'
         : 'Preview is optional. GitHub checks and review requirements still apply. Merge this task\u2019s selected version after reviewing its changes.'
-  const close = () => { merge.reset(); onOpenChange(false) }
+  const close = () => { merge.reset(); update.reset(); onOpenChange(false) }
   const resolve = async () => {
     if (!number || agent.isPending || resolving) return
     setResolving(true)
@@ -95,7 +105,7 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange, onAdoptCom
   const conflictState: RequirementState = !state || state.mergeable === 'unknown' ? 'unknown' : state.mergeable === 'mergeable' ? 'passing' : 'failing'
   const prNumber = state?.number ?? merge.data?.number ?? number
   const prUrl = state?.url ?? merge.data?.url
-  return <Dialog open={open} onOpenChange={value => { if (!busy) { if (!value) merge.reset(); onOpenChange(value) } }}>
+  return <Dialog open={open} onOpenChange={value => { if (!busy) { if (!value) { merge.reset(); update.reset() } onOpenChange(value) } }}>
     <DialogContent className="max-h-[85svh] overflow-y-auto">
       <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{description}</DialogDescription></DialogHeader>
       <p className="break-all font-mono text-xs">Commit {commit}</p>
@@ -128,17 +138,22 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange, onAdoptCom
             : <><p className="text-soft-foreground">The task&apos;s agent can resolve them and push. Reopen this dialog after it finishes.</p>
               <div><Button size="sm" disabled={resolving || agent.isPending} onClick={() => { void resolve() }}>{resolving || agent.isPending ? 'Sending…' : `Resolve conflicts in PR #${number}`}</Button></div></>}
         </div> : null}
+        {behindBox ? <div className="grid gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs">
+          <p className="font-medium">{behindBlocker?.message ?? 'This branch is behind.'}</p>
+          <p className="text-soft-foreground">Updating merges {state.baseRef} into {state.headRef} and re-runs the checks. Merge unlocks when they pass.</p>
+          <div><Button size="sm" disabled={busy} onClick={() => update.mutate()}>{update.isPending ? 'Updating…' : 'Update branch'}</Button></div>
+        </div> : null}
         {openPr && !mismatched ? <ul className="grid gap-2 text-sm">
           <li className="flex items-center gap-2"><RequirementIcon state={reviewState} /><span>Reviews: {state.reviewDecision.replaceAll('-', ' ')}</span></li>
           <li className="flex items-center gap-2"><RequirementIcon state={state.mergeable === 'unknown' ? 'pending' : conflictState} /><span>Conflicts: {state.mergeable === 'conflicting' ? 'present' : state.mergeable === 'mergeable' ? 'none' : 'waiting for an update from GitHub…'}</span></li>
           {state.checks.length === 0 && state.checksTier !== 'none' ? <li>No checks configured</li> : state.checks.map(check => <li key={check.name} className="flex items-center justify-between gap-3"><span className="flex min-w-0 items-center gap-2"><RequirementIcon state={check.state} /><span>{check.name} · {check.state}{check.required === true ? ' · required' : check.required === null ? ' · requiredness unknown' : ''}</span></span>{check.url ? <a href={check.url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-muted-foreground underline">details</a> : null}</li>)}
           {state.checksTier !== 'detailed' ? <li className="flex items-start gap-2"><RequirementIcon state="unknown" /><span>{state.checksTier === 'aggregate' ? 'Only the rolled-up check state is readable here — per-check detail is not.' : 'This token cannot read the checks on this pull request.'}{state.checksReason ? ` ${state.checksReason}` : ''}</span></li> : null}
         </ul> : null}
-        {state.blockers.map(blocker => <p key={blocker.code}>{blocker.message}</p>)}
+        {state.blockers.filter(blocker => blocker.code !== 'behind' || !behindBox).map(blocker => <p key={blocker.code}>{blocker.message}</p>)}
         {openPr && state.canOverride && !mismatched ? <label className="flex cursor-pointer items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs"><input type="checkbox" checked={overrideRules} onChange={e => setOverrideRules(e.target.checked)} className="mt-0.5 size-4 accent-primary" /><span><span className="block font-medium">Merge without waiting for requirements</span><span className="mt-0.5 block text-soft-foreground">GitHub will allow this only if your permissions can bypass the repository rules.</span></span></label> : null}
         {openPr && !mismatched && !conflicting && state.methods.length ? <label className="grid gap-1">Merge method<select aria-label="Merge method" className="rounded border border-border bg-background p-2 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50" value={selected ?? ''} onChange={e => setMethod(e.target.value as GithubMergeMethod)}>{state.methods.map(value => <option key={value} value={value}>{methodLabel(value)}</option>)}</select></label> : null}
       </div> : null}
-      {create.error || merge.error ? <p role="alert" className="text-danger">{create.error?.message ?? merge.error?.message}</p> : null}
+      {create.error || merge.error || update.error ? <p role="alert" className="text-danger">{create.error?.message ?? merge.error?.message ?? update.error?.message}</p> : null}
       <DialogFooter>
         {showSuccess ? <Button onClick={close}>Done</Button> : <>
           <Button variant="outline" disabled={busy} onClick={close}>Close</Button>

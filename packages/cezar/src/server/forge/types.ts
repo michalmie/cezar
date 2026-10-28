@@ -238,6 +238,20 @@ export type ForgeMergeResult =
       current?: ForgePrMergeState;
     };
 
+export interface ForgeUpdateBranchInput {
+  expectedHeadSha: string;
+}
+
+export type ForgeUpdateBranchResult =
+  | { updated: true; number: number; url: string }
+  | {
+      updated: false;
+      status: 403 | 404 | 409 | 502;
+      error: string;
+      code?: string;
+      current?: ForgePrMergeState;
+    };
+
 export interface ForgePrChange {
   path: string;
   previousPath?: string;
@@ -316,6 +330,8 @@ export interface ForgeDriver {
   prStatus(branch: string): Promise<ForgePrStatus | null>;
   prMergeState?(number: number, opts?: { refresh?: boolean }): Promise<ForgePrMergeStateResult>;
   mergePR?(number: number, input: ForgeMergeInput): Promise<ForgeMergeResult>;
+  /** Merge the base branch into the PR head (the "Update branch" action). Never throws. */
+  updatePRBranch?(number: number, input: ForgeUpdateBranchInput): Promise<ForgeUpdateBranchResult>;
   /** Bounded, read-only file changes for a pull request. */
   prDiff?(number: number, opts?: { refresh?: boolean }): Promise<ForgePrDiffResult>;
   /** Web URL for a ref on the forge, or null when the remote isn't parseable. */
