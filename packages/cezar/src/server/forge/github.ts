@@ -30,6 +30,8 @@ import type {
   ForgeRecentCreatedData,
   ForgeUpdateBranchInput,
   ForgeUpdateBranchResult,
+  PublishBranchInput,
+  PublishBranchOutcome,
   ForgeSearchData,
   ForgeTimelineEvent,
   ForgeTimelineEventKind,
@@ -2804,6 +2806,39 @@ export async function createDraftPr(input: DraftPrInput): Promise<DraftPrOutcome
     return { ok: false, error: 'gh pr create returned no PR URL — check `gh pr list` manually' };
   }
   return { ok: true, url: match[0], dryRun: false };
+}
+
+/** Publish a branch that lives outside the run's own repo (a cross-repo task's work): pin the SHA,
+ *  refuse an empty branch, then push exactly that commit and open the PR through `createDraftPr`
+ *  in snapshot mode — which never autosaves, so the foreign live checkout is read, never written. */
+export async function publishBranchFromRoot(input: PublishBranchInput): Promise<PublishBranchOutcome> {
+  const { repoRoot, run } = input;
+  const tip = await execTool(['rev-parse', `refs/heads/${input.branch}^{commit}`], repoRoot, 'git');
+  const sha = input.expectedHeadSha ?? (tip.ok ? tip.stdout.trim() : '');
+  if (!tip.ok || !/^[0-9a-f]{40}$/.test(sha) || tip.stdout.trim() !== sha) {
+    return { ok: false, error: 'The branch changed or is unavailable. Review it before publishing.' };
+  }
+  const remotes = await taskRemotes(repoRoot);
+  const baseCandidates = [...(remotes.base ? [`${remotes.base}/main`] : []), 'main'];
+  for (const candidate of baseCandidates) {
+    const exists = await execTool(['rev-parse', '--verify', '--quiet', `${candidate}^{commit}`], repoRoot, 'git');
+    if (!exists.ok) continue;
+    const count = await execTool(['rev-list', '--count', `${candidate}..${sha}`], repoRoot, 'git');
+    // Measured against the pinned SHA — never the live checkout's HEAD, which may sit anywhere.
+    if (count.ok && count.stdout.trim() === '0') return { ok: false, error: nothingToPropose(input.branch, 'main') };
+    break;
+  }
+  const outcome = await createDraftPr({
+    repoRoot,
+    run: { ...run, branch: input.branch, baseBranch: undefined, worktreePath: undefined },
+    handoffText: input.handoffText,
+    summary: input.summary,
+    draft: input.draft,
+    baseBranch: 'main',
+    expectedHeadSha: sha,
+  });
+  if (!outcome.ok) return outcome;
+  return { ok: true, url: outcome.url, dryRun: outcome.dryRun, branch: input.branch, sha };
 }
 
 /** The PR's base branch: `<remote>/x` normalizes to `x`; a raw sha (detached-HEAD fork point) can't

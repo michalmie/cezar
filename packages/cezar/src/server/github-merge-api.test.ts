@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -91,6 +92,27 @@ describe('the GitHub merge API', () => {
       }),
     });
     expect(response.status).toBe(403);
+  });
+  it('records the merge receipt on the driving run and ignores unknown run ids', async () => {
+    const run = store.createRun({ title: 'Feature', workflow: 'quick-task', task: 'Feature', steps: [] });
+    const stateResponse = await apiRequest(app, '/api/v1/github/prs/128/merge-state?refresh=1');
+    const { mergeState } = (await stateResponse.json()) as { mergeState: { headSha: string } };
+    const merge = (body: Record<string, unknown>) =>
+      apiRequest(app, '/api/v1/github/prs/128/merge', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: 'http://127.0.0.1:4321' },
+        body: JSON.stringify(body),
+      });
+    const response = await merge({ method: 'squash', expectedHeadSha: mergeState.headSha, runId: run.id });
+    expect(response.status).toBe(200);
+    expect(store.getRun(run.id)).toMatchObject({
+      mergeCommitSha: 'abcdef0123456789abcdef0123456789abcdef01',
+      mergedAt: expect.any(String),
+    });
+    // Recording must never fail a merge that already landed.
+    const unknown = await merge({ method: 'squash', expectedHeadSha: mergeState.headSha, runId: randomUUID() });
+    expect(unknown.status).toBe(200);
+    expect(await unknown.json()).toMatchObject({ merged: true, number: 128 });
   });
   it('refuses a merge when the pull request no longer targets the selected base', async () => {
     const response = await apiRequest(app, '/api/v1/github/prs/128/merge', {

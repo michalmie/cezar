@@ -314,6 +314,8 @@ export const githubMergeRequestSchema = z.object({
   expectedHeadSha: z.string().regex(/^[0-9a-f]{40}$/),
   expectedBaseRef: z.string().min(1).max(200).optional(),
   overrideRules: z.boolean().optional().default(false),
+  /** Records the merge receipt on this run; absent when merging outside any task. */
+  runId: z.string().uuid().optional(),
 }).strict();
 export type GithubMergeRequest = z.input<typeof githubMergeRequestSchema>;
 

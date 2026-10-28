@@ -294,6 +294,20 @@ export interface DraftPrInput {
   expectedHeadSha?: string;
 }
 
+export interface PublishBranchInput {
+  repoRoot: string;
+  run: RunRecord;
+  handoffText: string;
+  summary?: string;
+  branch: string;
+  expectedHeadSha?: string;
+  draft?: boolean;
+}
+
+export type PublishBranchOutcome =
+  | { ok: true; url: string; dryRun: boolean; branch: string; sha: string }
+  | { ok: false; error: string };
+
 /** Purpose-specific creation feed; independent of open lists and relevance search. */
 export interface ForgeRecentCreatedData {
   available: boolean;

@@ -694,6 +694,26 @@ export const createPrRequestSchema = z.object({
 });
 export type CreatePrRequest = z.infer<typeof createPrRequestSchema>;
 
+/** `POST /runs/:id/publish-branch` — push a branch that lives in another project checkout
+ *  (a cross-repo task's work) and open its PR against main. `expectedHeadSha` pins the exact
+ *  version; absent, the server resolves the branch tip and reports it back. Never main. */
+export const publishBranchRequestSchema = z.object({
+  projectId: z.string().min(1).max(200),
+  branch: z.string().regex(/^(?!HEAD$)(?!main$)(?!master$)(?!.*\.\.)(?!.*\/\/)(?!.*\/$)[A-Za-z0-9][A-Za-z0-9._/-]{0,200}$/),
+  expectedHeadSha: z.string().regex(/^[0-9a-f]{40}$/).optional(),
+  draft: z.boolean().optional(),
+});
+export type PublishBranchRequest = z.infer<typeof publishBranchRequestSchema>;
+
+export const publishBranchResponseSchema = z.object({
+  url: z.string(),
+  dryRun: z.boolean(),
+  branch: z.string(),
+  sha: z.string(),
+  projectId: z.string(),
+});
+export type PublishBranchResponse = z.infer<typeof publishBranchResponseSchema>;
+
 /** `POST /runs/:id/pr/adopt` — record the PR the agent opened from this task's branch, found on
  *  the forge by its head. `found: false` when there is none (or gh cannot say). */
 export const adoptPrResponseSchema = z.discriminatedUnion('found', [

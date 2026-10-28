@@ -2,13 +2,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, fireEvent, within, act } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ApiRun } from '@open-mercato/cezar-api-client'
-import { getFeaturePreview, createRunPr, getGithubPrMergeState, mergeGithubPr, updateGithubPrBranch } from '@/api/client'
+import { getFeaturePreview, createRunPr, getGithubPrMergeState, getProjects, mergeGithubPr, publishRunBranch, updateGithubPrBranch } from '@/api/client'
 import { toast } from '@/components/ui/toaster'
 import { FeaturePreviewButton } from './feature-preview-button'
 import { useAskAnswer, type AskAnswerDelivery } from './ask-answer'
 import { MemoryRouter } from 'react-router'
 
-vi.mock('@/api/client', () => ({ getFeaturePreview: vi.fn(), createRunPr: vi.fn(), getGithubPrMergeState: vi.fn(), mergeGithubPr: vi.fn(), updateGithubPrBranch: vi.fn() }))
+vi.mock('@/api/client', () => ({ getFeaturePreview: vi.fn(), createRunPr: vi.fn(), getGithubPrMergeState: vi.fn(), getProjects: vi.fn(), mergeGithubPr: vi.fn(), publishRunBranch: vi.fn(), updateGithubPrBranch: vi.fn() }))
 vi.mock('./ask-answer', () => ({ useAskAnswer: vi.fn() }))
 vi.mock('@/components/ui/toaster', () => ({ toast: vi.fn() }))
 const taskId = 'a1234567-1234-4123-8123-123456789abc'
@@ -58,7 +58,7 @@ it.each(['approved', 'not-required'] as const)('merges the selected PR into main
   await vi.waitFor(() => expect(button.hasAttribute('disabled')).toBe(false))
   expect(mergeGithubPr).not.toHaveBeenCalled()
   fireEvent.click(button)
-  await vi.waitFor(() => expect(mergeGithubPr).toHaveBeenCalledWith(9, { method: 'squash', expectedHeadSha: commit, expectedBaseRef: 'main', overrideRules: false }))
+  await vi.waitFor(() => expect(mergeGithubPr).toHaveBeenCalledWith(9, { method: 'squash', expectedHeadSha: commit, expectedBaseRef: 'main', overrideRules: false, runId: taskId }))
 })
 it('withholds merging until overridden when GitHub requirements differ', async () => {
   available(); vi.mocked(getGithubPrMergeState).mockResolvedValue({ available: true, mergeState: { ...ready, canMerge: false, canOverride: true } })
@@ -122,7 +122,7 @@ it('offers an explicit override merge when GitHub requirements are unknown', asy
   fireEvent.click(override)
   await vi.waitFor(() => expect(button.hasAttribute('disabled')).toBe(false))
   fireEvent.click(button)
-  await vi.waitFor(() => expect(mergeGithubPr).toHaveBeenCalledWith(9, { method: 'squash', expectedHeadSha: commit, expectedBaseRef: 'main', overrideRules: true }))
+  await vi.waitFor(() => expect(mergeGithubPr).toHaveBeenCalledWith(9, { method: 'squash', expectedHeadSha: commit, expectedBaseRef: 'main', overrideRules: true, runId: taskId }))
 })
 it.each([{ ...ready, baseRef: 'develop', canMerge: false, canOverride: true }, { ...ready, headSha: 'b'.repeat(40), canMerge: false, canOverride: true }])('never offers a rule override for the wrong base or version', async state => {
   available(); vi.mocked(getGithubPrMergeState).mockResolvedValue({ available: true, mergeState: state })
@@ -153,11 +153,24 @@ it('shows an unmistakable success state after merging', async () => {
   await within(dialog).findByRole('heading', { name: 'Merged into main' })
   expect(within(dialog).getByRole('status').textContent).toContain('PR #9 merged into main.')
   expect(within(dialog).getByRole('status').textContent).toContain(`Merge commit ${'c'.repeat(8)}`)
+  expect(within(dialog).getByRole('link', { name: `Verify merge commit ${'c'.repeat(8)} on main ↗` }).getAttribute('href')).toBe(`https://github.com/acme/demo/commit/${'c'.repeat(40)}`)
   expect(within(dialog).queryByRole('button', { name: 'Merge PR into main' })).toBeNull()
   expect(within(dialog).queryByLabelText('Merge method')).toBeNull()
   expect(within(dialog).queryByRole('checkbox')).toBeNull()
   fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }))
   await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+})
+it('shows no verify link when the merge response carries no commit SHA', async () => {
+  available(); vi.mocked(getGithubPrMergeState).mockResolvedValue({ available: true, mergeState: ready })
+  vi.mocked(mergeGithubPr).mockResolvedValue({ merged: true, number: 9, url: ready.url, method: 'squash' })
+  show({ ...run, pullRequestUrl: ready.url }, `?featureAction=merge&commit=${commit}&number=9`)
+  const dialog = await screen.findByRole('dialog')
+  const button = within(dialog).getByRole('button', { name: 'Merge PR into main' })
+  await vi.waitFor(() => expect(button.hasAttribute('disabled')).toBe(false))
+  fireEvent.click(button)
+  await within(dialog).findByRole('heading', { name: 'Merged into main' })
+  expect(within(dialog).queryByRole('link', { name: /Verify merge commit/ })).toBeNull()
+  expect(within(dialog).getByRole('link', { name: 'View PR #9 ↗' })).toBeTruthy()
 })
 it('shows the merged state without merge controls when the PR is already merged', async () => {
   const merged = { ...ready, state: 'merged' as const, mergeable: 'unknown' as const, reviewDecision: 'unknown' as const, eligibility: 'terminal' as const, blockers: [{ code: 'terminal', message: 'This pull request is merged.' }], canMerge: false, canOverride: false }
@@ -214,7 +227,7 @@ it('adopts the reviewed new head after the PR moves', async () => {
   const button = await within(screen.getByRole('dialog')).findByRole('button', { name: 'Merge PR into main' })
   await vi.waitFor(() => expect(button.hasAttribute('disabled')).toBe(false))
   fireEvent.click(button)
-  await vi.waitFor(() => expect(mergeGithubPr).toHaveBeenCalledWith(9, { method: 'squash', expectedHeadSha: moved, expectedBaseRef: 'main', overrideRules: false }))
+  await vi.waitFor(() => expect(mergeGithubPr).toHaveBeenCalledWith(9, { method: 'squash', expectedHeadSha: moved, expectedBaseRef: 'main', overrideRules: false, runId: taskId }))
 })
 it('links each check to its GitHub Actions run when a URL is available', async () => {
   const withChecks = { ...ready, canMerge: false, canOverride: true, eligibility: 'pending' as const, blockers: [{ code: 'pending', message: 'Checks or GitHub mergeability are still pending.' }], checks: [{ name: 'checks', state: 'pending' as const, required: true, url: 'https://github.com/acme/demo/actions/runs/1/job/2' }, { name: 'lint', state: 'passing' as const, required: false }] }
@@ -265,4 +278,59 @@ it('does not offer a build for active or unsupported tasks', async () => {
   show()
   await vi.waitFor(() => expect(getFeaturePreview).toHaveBeenCalledOnce())
   expect(screen.queryByRole('button', { name: 'Build preview' })).toBeNull()
+})
+const registry = [
+  { id: 'factory', name: 'Factory', root: '/tmp/factory', addedAt: '', lastOpenedAt: '', source: 'local' as const, status: 'ok' as const, forge: 'github' as const },
+  { id: 'byov', name: 'BYOV', root: '/tmp/byov', addedAt: '', lastOpenedAt: '', source: 'local' as const, status: 'ok' as const, forge: 'github' as const },
+]
+it('publishes the task branch to another project without pinning this repo version', async () => {
+  available()
+  vi.mocked(getProjects).mockResolvedValue({ projects: registry, bootProject: 'factory', projectsDir: '/tmp' })
+  vi.mocked(publishRunBranch).mockResolvedValue({ url: 'https://github.com/acme/byov/pull/12', dryRun: false, branch: 'cez/task', sha: 'c'.repeat(40), projectId: 'byov' })
+  show({ ...run, branch: 'cez/task' }, `?featureAction=merge&commit=${commit}&number=9`)
+  const dialog = await screen.findByRole('dialog')
+  expect(publishRunBranch).not.toHaveBeenCalled()
+  expect(getProjects).not.toHaveBeenCalled()
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Publish to another project…' }))
+  await within(dialog).findByRole('option', { name: 'BYOV' })
+  const select = within(dialog).getByLabelText('Target project')
+  fireEvent.change(select, { target: { value: 'byov' } })
+  expect((within(dialog).getByLabelText('Branch') as HTMLInputElement).value).toBe('cez/task')
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Publish branch' }))
+  await vi.waitFor(() => expect(publishRunBranch).toHaveBeenCalledWith(taskId, { projectId: 'byov', branch: 'cez/task' }))
+  await within(dialog).findByRole('heading', { name: 'Published to BYOV' })
+  expect(within(dialog).getByRole('link', { name: 'View PR ↗' }).getAttribute('href')).toBe('https://github.com/acme/byov/pull/12')
+  expect(within(dialog).queryByRole('button', { name: 'Create PR for main' })).toBeNull()
+  expect(within(dialog).queryByRole('button', { name: 'Merge PR into main' })).toBeNull()
+  expect(getGithubPrMergeState).not.toHaveBeenCalled()
+  expect(createRunPr).not.toHaveBeenCalled()
+})
+it('keeps the published PR out of the merge flow when the run refreshes mid-dialog', async () => {
+  available()
+  vi.mocked(getProjects).mockResolvedValue({ projects: registry, bootProject: 'factory', projectsDir: '/tmp' })
+  vi.mocked(publishRunBranch).mockResolvedValue({ url: 'https://github.com/acme/byov/pull/12', dryRun: false, branch: 'cez/task', sha: 'c'.repeat(40), projectId: 'byov' })
+  const { rerender, client } = show({ ...run, branch: 'cez/task' }, `?featureAction=merge&commit=${commit}&number=9`)
+  const dialog = await screen.findByRole('dialog')
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Publish to another project…' }))
+  await within(dialog).findByRole('option', { name: 'BYOV' })
+  const select = within(dialog).getByLabelText('Target project')
+  fireEvent.change(select, { target: { value: 'byov' } })
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Publish branch' }))
+  await within(dialog).findByRole('heading', { name: 'Published to BYOV' })
+  rerender(<MemoryRouter initialEntries={[`/tasks/${taskId}?featureAction=merge&commit=${commit}&number=9`]}><QueryClientProvider client={client}><FeaturePreviewButton run={{ ...run, branch: 'cez/task', pullRequestUrl: 'https://github.com/acme/byov/pull/12' }} /></QueryClientProvider></MemoryRouter>)
+  await vi.waitFor(() => expect(screen.getByRole('heading', { name: 'Published to BYOV' })).toBeTruthy())
+  expect(getGithubPrMergeState).not.toHaveBeenCalled()
+})
+it('reports a publish failure without leaving the dialog', async () => {
+  available()
+  vi.mocked(getProjects).mockResolvedValue({ projects: registry, bootProject: 'factory', projectsDir: '/tmp' })
+  vi.mocked(publishRunBranch).mockRejectedValue(new Error('The branch changed or is unavailable. Review it before publishing.'))
+  show({ ...run, branch: 'cez/task' }, `?featureAction=merge&commit=${commit}&number=9`)
+  const dialog = await screen.findByRole('dialog')
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Publish to another project…' }))
+  await within(dialog).findByRole('option', { name: 'BYOV' })
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Publish branch' }))
+  await within(dialog).findByText('The branch changed or is unavailable. Review it before publishing.')
+  expect(within(dialog).getByRole('button', { name: 'Publish branch' })).toBeTruthy()
+  expect(publishRunBranch).toHaveBeenCalledTimes(1)
 })

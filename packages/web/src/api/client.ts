@@ -1,5 +1,5 @@
 import { deferredAlreadyStartedSchema, trackerReadScope, resolveApiUrl, workspaceBrandingLogoResponseSchema } from '@open-mercato/cezar-api-client'
-import type { FeaturePreviewResponse, CreatePrRequest, GithubMergeRequest, GithubPrUpdateBranchRequest, GithubPrUpdateBranchResponse } from '@open-mercato/cezar-api-client'
+import type { FeaturePreviewResponse, CreatePrRequest, GithubMergeRequest, GithubPrUpdateBranchRequest, GithubPrUpdateBranchResponse, PublishBranchRequest, PublishBranchResponse } from '@open-mercato/cezar-api-client'
 import type { TaskActionSurface, TrackerAutomationOptions } from '@open-mercato/cezar-api-client'
 import type { z } from 'zod'
 import type {
@@ -1753,6 +1753,37 @@ export async function createRunPr(id: string, opts: CreatePrRequest = {}): Promi
         json: opts,
       }),
       runPath(id, '/pr'),
+    )
+  try {
+    return await post()
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 0) throw error
+    await new Promise((resolve) => setTimeout(resolve, PR_RETRY_DELAY_MS))
+    try {
+      return await post()
+    } catch (retry) {
+      throw retry instanceof ApiError && retry.status === 0 ? error : retry
+    }
+  }
+}
+
+/** Publish this task's branch as a PR from ANOTHER project's checkout (cross-repo pipeline):
+ *  the server pins the branch's current version there and opens the PR for main. The branch
+ *  must already exist in that checkout — sync it there first.
+ *
+ *  Same lost-response retry as `createRunPr`: a publish runs push + `gh pr create` for up to
+ *  minutes, so a status 0 says nothing about the PR and the second call adopts what the first
+ *  one opened. `expectedHeadSha` is omitted on purpose — the task's version SHA belongs to this
+ *  repo's history, not the target's; the server pins the target branch tip instead. */
+export async function publishRunBranch(id: string, input: PublishBranchRequest): Promise<PublishBranchResponse> {
+  const projectId = queryScope()
+  const post = async () =>
+    unwrap(
+      await cez.api.v1.p[':projectId'].runs[':id']['publish-branch'].$post({
+        param: { projectId, id: encodeURIComponent(id) },
+        json: input,
+      }),
+      runPath(id, '/publish-branch'),
     )
   try {
     return await post()

@@ -28,6 +28,11 @@ autosaves or publishes another version, changes a PR's target, or bypasses rules
 The server rechecks the expected head and target before merging.
 If the worktree was removed, the saved task branch can publish the pinned commit
 from the repository without autosaving or changing the local checkout.
+When the task's work belongs to another registered project,
+**Publish to another project** pins that checkout's branch version and opens
+its PR against main there; review and merge then happen in that repo.
+The merge confirmation links the merge commit so the landed result can be
+verified on main.
 
 Completed supported Ready results include **Build preview** and **Merge PR into
 main** links in their existing GitHub issue summary. Opening either link only

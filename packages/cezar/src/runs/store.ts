@@ -349,6 +349,14 @@ export const runRecordSchema = z.object({
   costUsd: z.number().optional(),
   /** First GitHub PR URL spotted in the transcript (the janitor trick). */
   pullRequestUrl: z.string().optional(),
+  /** Cross-repo publish provenance: `POST /runs/:id/publish-branch` pushed this branch/SHA
+   *  from another project checkout and opened the PR above for it. */
+  publishedProjectId: z.string().optional(),
+  publishedBranch: z.string().optional(),
+  publishedSha: z.string().optional(),
+  /** Merge receipt from the merge dialog (`runId` in the merge body). */
+  mergeCommitSha: z.string().optional(),
+  mergedAt: z.string().optional(),
   /** The PR this task is ABOUT (#407, spec 2026-07-16-pr-autodiscovery):
    *  auto-discovered from conversation references for tasks that work on an
    *  existing PR (review/continue/merge). Display-only tier — `pullRequestUrl`

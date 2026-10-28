@@ -1,5 +1,5 @@
 import { projectTriggerSchema } from '@open-mercato/cezar-contract';
-import { featurePreviewParamsSchema, createPrRequestSchema, githubMergeRequestSchema, githubPrUpdateBranchRequestSchema } from '@open-mercato/cezar-contract';
+import { featurePreviewParamsSchema, createPrRequestSchema, githubMergeRequestSchema, githubPrUpdateBranchRequestSchema, publishBranchRequestSchema } from '@open-mercato/cezar-contract';
 import { featurePreview } from './feature-preview.ts';
 import { createWebhookRoutes } from './webhooks.ts';
 import { WebhookCoordinator } from '../webhooks/coordinator.ts';
@@ -318,7 +318,7 @@ import {
   openInApp,
   withResolvedClaudeBin,
 } from './open-in-app.ts';
-import { createDraftPr, type DraftPrOutcome } from './pr.ts';
+import { createDraftPr, publishBranchFromRoot, type DraftPrOutcome } from './pr.ts';
 import { findBranchPr, resolvePrTarget } from './forge/github.ts';
 import {
   DEFAULT_TELEMETRY_URL,
@@ -5774,6 +5774,51 @@ export function createApp(deps: ServerDeps) {
       return c.json({ found: true as const, url: pr.url });
     })
 
+    .post('/runs/:id/publish-branch', jsonZodValidator(publishBranchRequestSchema, { message: 'invalid publish-branch request' }), async (c) => {
+      const { dataDir, store, manager } = c.get('project');
+      const id = c.req.param('id');
+      const run = store.getRun(id);
+      if (!run) return c.json({ error: 'not found' }, 404);
+      if (manager.isActive(id)) return c.json({ error: 'run is still active — wait for the review gate' }, 409);
+      const body = c.req.valid('json');
+      let targetRoot: string;
+      try {
+        targetRoot = (await contexts.context(body.projectId)).root;
+      } catch (error) {
+        if (error instanceof ProjectContextError) {
+          return error.reason === 'unknown-project'
+            ? c.json({ error: `unknown project ${body.projectId}` }, 404)
+            : c.json({ error: `project ${body.projectId} is unavailable` }, 409);
+        }
+        throw error;
+      }
+      const outcome = await publishBranchFromRoot({
+        repoRoot: targetRoot,
+        run,
+        handoffText: readHandoff(dataDir, id),
+        summary: readRunDeliverySummary(dataDir, store, id),
+        branch: body.branch,
+        ...(body.expectedHeadSha ? { expectedHeadSha: body.expectedHeadSha } : {}),
+        ...(body.draft !== undefined ? { draft: body.draft } : {}),
+      });
+      if (!outcome.ok) return c.json({ error: outcome.error, manual: `git merge ${body.branch}` }, 409);
+      const createdNumber = refNumberFromUrl(outcome.url);
+      if (createdNumber !== null) forgetRefStatus(targetRoot, createdNumber);
+      const draft = body.draft ?? true;
+      track('pr_opened', { label: draft ? 'draft' : 'ready' }, { sid: deviceSid(c.req.header('x-cezar-sid')) });
+      store.updateRun(id, {
+        pullRequestUrl: outcome.url,
+        publishedProjectId: body.projectId,
+        publishedBranch: outcome.branch,
+        publishedSha: outcome.sha,
+      });
+      store.appendEvent(id, {
+        type: 'note',
+        message: `PR created from ${body.projectId}@${outcome.branch}: ${outcome.url} (review gate still applies)`,
+      });
+      return c.json({ url: outcome.url, dryRun: outcome.dryRun, branch: outcome.branch, sha: outcome.sha, projectId: body.projectId }, 201);
+    })
+
     // Archived tasks keep their worktree for inspection; this is the explicit
     // "🧹 Remove worktree" cleanup (spec 006).
     .post('/runs/:id/remove-worktree', async (c) => {
@@ -6935,7 +6980,7 @@ export function createApp(deps: ServerDeps) {
       paramZodValidator(mergeNumberParams, { message: 'invalid pull request number' }),
       jsonZodValidator(() => mergeBodySchema, { message: 'invalid merge request' }),
       async (c) => {
-        const { root: repoRoot } = c.get('project');
+        const { root: repoRoot, store } = c.get('project');
         const parsedNumber = { data: c.req.valid('param') };
         const body = { data: c.req.valid('json') };
         const forge = resolveForge(await getRepoInfo(repoRoot));
@@ -6947,6 +6992,14 @@ export function createApp(deps: ServerDeps) {
           // a minute after the user watched this server merge it. Forget it; the next reader asks
           // the forge, gets `merged`, and then stops polling it at all.
           forgetRefStatus(repoRoot, parsedNumber.data.number);
+          // A receipt for the task that drove the merge; unknown ids are ignored — recording
+          // must never fail a merge that already landed.
+          if (body.data.runId && store.getRun(body.data.runId)) {
+            store.updateRun(body.data.runId, {
+              ...(result.mergeCommitSha ? { mergeCommitSha: result.mergeCommitSha } : {}),
+              mergedAt: new Date().toISOString(),
+            });
+          }
           return c.json(result);
         }
         return c.json(

@@ -2,9 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CircleCheckIcon, CircleIcon, CircleXIcon, LoaderCircleIcon } from 'lucide-react'
 import { useState } from 'react'
 import type { ApiRun, GithubMergeMethod } from '@open-mercato/cezar-api-client'
-import { createRunPr, getGithubPrMergeState, mergeGithubPr, updateGithubPrBranch } from '@/api/client'
+import { createRunPr, getGithubPrMergeState, getProjects, mergeGithubPr, publishRunBranch, updateGithubPrBranch } from '@/api/client'
 import { useProjectScope } from '@/api/project-scope-context'
-import { queryKeys } from '@/api/queries'
+import { queryKeys, workspaceQueryKeys } from '@/api/queries'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { toast } from '@/components/ui/toaster'
@@ -28,13 +28,44 @@ function methodLabel(value: GithubMergeMethod) {
   return value === 'squash' ? 'Squash and merge' : value === 'rebase' ? 'Rebase and merge' : 'Create a merge commit'
 }
 
+// The completion nudge: a merge-commit link so the landed result can be verified on main.
+// Derived from the PR URL's shape (`/pull/N` → `/commit/<sha>`); null unless both halves are
+// known and the URL has the expected shape — the panel simply shows no link then.
+function mergeCommitUrl(prUrl: string | undefined, sha: string | undefined) {
+  if (!prUrl || !sha) return null
+  try {
+    const url = new URL(prUrl)
+    if (!/\/pull\/\d+\/?$/.test(url.pathname)) return null
+    url.pathname = url.pathname.replace(/\/pull\/\d+\/?$/, `/commit/${sha}`)
+    return url.toString()
+  } catch { return null }
+}
+
 export function FeatureMergeDialog({ run, commit, open, onOpenChange, onAdoptCommit }: {
   run: ApiRun; commit: string; open: boolean; onOpenChange: (open: boolean) => void; onAdoptCommit: (commit: string) => void
 }) {
   const { projectId } = useProjectScope()
   const client = useQueryClient()
   const [createdNumber, setCreatedNumber] = useState<number | null>(null)
-  const number = createdNumber ?? ownedTaskPr(run)?.number
+  const [publishOpen, setPublishOpen] = useState(false)
+  const [publishProjectId, setPublishProjectId] = useState('')
+  const [publishBranchName, setPublishBranchName] = useState(run.branch ?? '')
+  const projects = useQuery({ queryKey: workspaceQueryKeys.projects, queryFn: () => getProjects(), enabled: open && publishOpen, retry: false })
+  const targets = (projects.data?.projects ?? []).filter(entry => entry.id !== projectId && entry.status === 'ok' && entry.forge === 'github')
+  const targetId = publishProjectId || targets[0]?.id || ''
+  const target = targets.find(entry => entry.id === targetId)
+  const publish = useMutation({
+    mutationFn: () => {
+      if (!target || !publishBranchName.trim()) throw new Error('Choose a project and a branch to publish.')
+      return publishRunBranch(run.id, { projectId: target.id, branch: publishBranchName.trim() })
+    },
+    onSuccess: () => { void client.invalidateQueries({ queryKey: queryKeys.runs.all }) },
+  })
+  // A published PR lives in ANOTHER project's repo, while merge-state here is scoped to this
+  // run's project — so the published panel owns the dialog until close and never hands off to
+  // the merge flow, even if the run prop refreshes with the new pullRequestUrl mid-dialog.
+  const publishedPr = publish.isSuccess ? publish.data ?? null : null
+  const number = publishedPr ? undefined : createdNumber ?? ownedTaskPr(run)?.number
   const [method, setMethod] = useState<GithubMergeMethod | null>(null)
   const [overrideRules, setOverrideRules] = useState(false)
   const status = useQuery({
@@ -60,7 +91,7 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange, onAdoptCom
   const merge = useMutation({
     mutationFn: () => {
       if (!number || !state || !selected || wrongVersion || wrongBase || !(state.canMerge || (state.canOverride && overrideRules))) throw new Error('This selected version is not ready to merge into main.')
-      return mergeGithubPr(number, { method: selected, expectedHeadSha: commit, expectedBaseRef: 'main', overrideRules: overrideRules && state.canOverride })
+      return mergeGithubPr(number, { method: selected, expectedHeadSha: commit, expectedBaseRef: 'main', overrideRules: overrideRules && state.canOverride, runId: run.id })
     },
     onSuccess: () => { void status.refetch(); void client.invalidateQueries({ queryKey: queryKeys.runs.all }) },
     onError: () => { void status.refetch() },
@@ -75,7 +106,7 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange, onAdoptCom
   })
   const agent = useAskAnswer(run, undefined, 'git_step')
   const [resolving, setResolving] = useState(false)
-  const busy = create.isPending || merge.isPending || resolving || update.isPending
+  const busy = create.isPending || merge.isPending || resolving || update.isPending || publish.isPending
   // Server truth first; the fresh mutation covers the refetch gap. Reset on close so a reopen never replays a stale success.
   const showSuccess = Boolean(!mismatched && (merge.isSuccess || state?.state === 'merged'))
   const openPr = state?.state === 'open'
@@ -83,15 +114,18 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange, onAdoptCom
   const behindBlocker = state?.blockers.find(blocker => blocker.code === 'behind')
   const behindBox = Boolean(openPr && !mismatched && behindBlocker)
   const showMergeAction = !state || (openPr && !mismatched && !conflicting)
-  const title = showSuccess ? 'Merged into main' : state?.state === 'closed' ? 'Pull request closed' : state?.state === 'merged' ? 'Already merged' : 'Merge PR into main'
-  const description = showSuccess
+  const publishedProjectName = publishedPr ? targets.find(entry => entry.id === publishedPr.projectId)?.name ?? publishedPr.projectId : ''
+  const title = publishedPr ? `Published to ${publishedProjectName}` : showSuccess ? 'Merged into main' : state?.state === 'closed' ? 'Pull request closed' : state?.state === 'merged' ? 'Already merged' : 'Merge PR into main'
+  const description = publishedPr
+    ? `Version ${publishedPr.sha.slice(0, 8)} is proposed to main in ${publishedProjectName}.`
+    : showSuccess
     ? `Version ${commit.slice(0, 8)} of this task is now on main.`
     : state?.state === 'closed'
       ? 'This pull request was closed without merging.'
       : state?.state === 'merged'
         ? 'This pull request is merged, but not at this task\u2019s selected version.'
         : 'Preview is optional. GitHub checks and review requirements still apply. Merge this task\u2019s selected version after reviewing its changes.'
-  const close = () => { merge.reset(); update.reset(); onOpenChange(false) }
+  const close = () => { merge.reset(); update.reset(); publish.reset(); onOpenChange(false) }
   const resolve = async () => {
     if (!number || agent.isPending || resolving) return
     setResolving(true)
@@ -105,11 +139,21 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange, onAdoptCom
   const conflictState: RequirementState = !state || state.mergeable === 'unknown' ? 'unknown' : state.mergeable === 'mergeable' ? 'passing' : 'failing'
   const prNumber = state?.number ?? merge.data?.number ?? number
   const prUrl = state?.url ?? merge.data?.url
-  return <Dialog open={open} onOpenChange={value => { if (!busy) { if (!value) { merge.reset(); update.reset() } onOpenChange(value) } }}>
+  const commitLink = mergeCommitUrl(prUrl, merge.data?.mergeCommitSha)
+  return <Dialog open={open} onOpenChange={value => { if (!busy) { if (!value) { merge.reset(); update.reset(); publish.reset() } onOpenChange(value) } }}>
     <DialogContent className="max-h-[85svh] overflow-y-auto">
       <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{description}</DialogDescription></DialogHeader>
       <p className="break-all font-mono text-xs">Commit {commit}</p>
-      {!number ? <p className="text-sm">This task has no pull request yet. Create a PR for main, then review its merge requirements here.</p> : null}
+      {!number && !publishedPr ? <p className="text-sm">This task has no pull request yet. Create a PR for main, then review its merge requirements here.</p> : null}
+      {!number && !publishedPr && !publishOpen ? <div><Button size="sm" variant="outline" onClick={() => setPublishOpen(true)}>Publish to another project…</Button></div> : null}
+      {!number && !publishedPr && publishOpen ? <div className="grid gap-2 rounded-md border border-border bg-card p-3 text-xs">
+        <label className="grid gap-1">Project<select aria-label="Target project" className="rounded border border-border bg-background p-2 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50" value={targetId} onChange={e => setPublishProjectId(e.target.value)}>{targets.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
+        <label className="grid gap-1">Branch<input aria-label="Branch" className="rounded border border-border bg-background p-2 font-mono outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50" value={publishBranchName} onChange={e => setPublishBranchName(e.target.value)} placeholder="cez/task-branch" /></label>
+        {projects.isPending ? <p role="status">Loading projects…</p> : null}
+        {projects.data && targets.length === 0 ? <p>No other GitHub project is registered.</p> : null}
+        <p className="text-soft-foreground">Sync this task&apos;s branch into that project&apos;s checkout first — publishing pins its current version and opens a PR for main.</p>
+        <div><Button size="sm" disabled={busy || !target || !publishBranchName.trim()} onClick={() => publish.mutate()}>{publish.isPending ? 'Publishing…' : 'Publish branch'}</Button></div>
+      </div> : null}
       {number && status.isPending ? <p role="status">Loading PR merge requirements…</p> : null}
       {number && status.data?.available === false ? <p role="alert">{status.data.reason}</p> : null}
       {status.error ? <p role="alert">{status.error.message}</p> : null}
@@ -120,6 +164,7 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange, onAdoptCom
           {state ? <p className="text-soft-foreground">{state.headRef} → {state.baseRef}</p> : null}
           <p className="break-all font-mono text-xs" title={commit}>Version {commit.slice(0, 8)}{merge.data?.mergeCommitSha ? ` · Merge commit ${merge.data.mergeCommitSha.slice(0, 8)}` : ''}</p>
           {prUrl ? <a href={prUrl} target="_blank" rel="noopener noreferrer" className="underline">View PR #{prNumber} ↗</a> : null}
+          {commitLink ? <a href={commitLink} target="_blank" rel="noopener noreferrer" className="underline">Verify merge commit {merge.data?.mergeCommitSha?.slice(0, 8)} on main ↗</a> : null}
         </div>
       </div> : null}
       {!showSuccess && state ? <div className="grid gap-3 text-sm">
@@ -153,9 +198,19 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange, onAdoptCom
         {openPr && state.canOverride && !mismatched ? <label className="flex cursor-pointer items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs"><input type="checkbox" checked={overrideRules} onChange={e => setOverrideRules(e.target.checked)} className="mt-0.5 size-4 accent-primary" /><span><span className="block font-medium">Merge without waiting for requirements</span><span className="mt-0.5 block text-soft-foreground">GitHub will allow this only if your permissions can bypass the repository rules.</span></span></label> : null}
         {openPr && !mismatched && !conflicting && state.methods.length ? <label className="grid gap-1">Merge method<select aria-label="Merge method" className="rounded border border-border bg-background p-2 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50" value={selected ?? ''} onChange={e => setMethod(e.target.value as GithubMergeMethod)}>{state.methods.map(value => <option key={value} value={value}>{methodLabel(value)}</option>)}</select></label> : null}
       </div> : null}
-      {create.error || merge.error || update.error ? <p role="alert" className="text-danger">{create.error?.message ?? merge.error?.message ?? update.error?.message}</p> : null}
+      {publishedPr ? <div role="status" className="flex items-start gap-4 rounded-lg border border-success/50 bg-success/10 p-5">
+        <CircleCheckIcon aria-hidden="true" className="size-10 shrink-0 text-success" />
+        <div className="grid min-w-0 gap-1 text-sm">
+          <p className="text-lg font-semibold">PR opened in {publishedProjectName}.</p>
+          <p className="text-soft-foreground">{publishedPr.branch} → main</p>
+          <p className="break-all font-mono text-xs" title={publishedPr.sha}>Version {publishedPr.sha.slice(0, 8)}</p>
+          <a href={publishedPr.url} target="_blank" rel="noopener noreferrer" className="underline">View PR ↗</a>
+          <p className="text-soft-foreground">Review and merge happen in that project&apos;s repo — this dialog only follows PRs opened here.</p>
+        </div>
+      </div> : null}
+      {create.error || merge.error || update.error || publish.error ? <p role="alert" className="text-danger">{create.error?.message ?? merge.error?.message ?? update.error?.message ?? publish.error?.message}</p> : null}
       <DialogFooter>
-        {showSuccess ? <Button onClick={close}>Done</Button> : <>
+        {showSuccess || publishedPr ? <Button onClick={close}>Done</Button> : <>
           <Button variant="outline" disabled={busy} onClick={close}>Close</Button>
           {!number ? <Button disabled={busy} onClick={() => create.mutate()}>{create.isPending ? 'Creating PR…' : 'Create PR for main'}</Button> : <>
             <Button variant="outline" disabled={busy || status.isFetching} onClick={() => { void status.refetch() }}>Refresh</Button>

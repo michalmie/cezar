@@ -5,3 +5,5 @@
  */
 export { buildPrBody, createDraftPr } from './forge/github.ts';
 export type { DraftPrInput, DraftPrOutcome } from './forge/types.ts';
+export { publishBranchFromRoot } from './forge/github.ts';
+export type { PublishBranchInput, PublishBranchOutcome } from './forge/types.ts';
