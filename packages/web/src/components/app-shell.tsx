@@ -25,6 +25,7 @@ import { Link, stripProjectPrefix } from '@/lib/project-router'
 import { isSettingsPathname } from '@/lib/settings-path'
 import { CEZAR_REPO_URL, formatStarCount } from '@/lib/star-promo'
 import { BrandLockup } from '@/components/brand-mark'
+import { RunningTasksBadge } from '@/components/running-tasks-badge'
 import { SelfUpdateDialog } from '@/components/self-update-dialog'
 import { StatusDot } from '@/components/status-dot'
 import { ThemeToggle } from '@/components/theme-toggle'
@@ -62,6 +63,9 @@ export type AppShellProps = {
   /** Unread done-items count for the Tasks badge (#unread-done-items). Null/0 renders no badge;
    *  the container derives it from the run list via `unreadDoneCount`. */
   unreadCount?: number | null
+  /** Tasks running anywhere in the workspace, for the All tasks door's spinner badge. Null/0
+   *  renders no badge; the container derives it from the cross-project runs index. */
+  runningCount?: number | null
   /** A quiet, accessible marker on Skills when a checked update remains actionable. */
   skillsUpdateAvailable?: boolean
   /** cezar version for the footer chip. Null until Step 3.1 reads it from `/api/health`. */
@@ -176,6 +180,7 @@ export const AppShell = React.memo(function AppShell({
   repo = null,
   inboxCount = null,
   unreadCount = null,
+  runningCount = null,
   skillsUpdateAvailable = false,
   version = null,
   latestVersion = null,
@@ -260,6 +265,7 @@ export const AppShell = React.memo(function AppShell({
     // The badge belongs to the Inbox item — with the item gone there is nothing to badge.
     inboxCount: inboxAvailable ? inboxCount : null,
     unreadCount,
+    runningCount,
     skillsUpdateAvailable,
     version,
     latestVersion,
@@ -376,6 +382,7 @@ type NavProps = {
   repo: RepoChip | null
   inboxCount: number | null
   unreadCount: number | null
+  runningCount: number | null
   skillsUpdateAvailable: boolean
   version: string | null
   latestVersion: string | null
@@ -426,6 +433,7 @@ function SidebarContent({
   repo,
   inboxCount,
   unreadCount,
+  runningCount,
   skillsUpdateAvailable,
   version,
   latestVersion,
@@ -517,7 +525,7 @@ function SidebarContent({
               workspace: with one project the page would be that project's own Tasks table
               wearing a second name. */}
           <div className="shrink-0 border-b border-border px-1.5 pt-0.5 pb-2">
-            <AllTasksLink onNavigate={onNavigate} />
+            <AllTasksLink onNavigate={onNavigate} runningCount={runningCount} />
           </div>
           {/* Step 3.3: one collapsible group per registered project — nav + task list per group.
               The whole area scrolls as one (per the sidebar mockup); collapsed groups are one row. */}
@@ -684,7 +692,7 @@ function DashboardLink({ onNavigate }: { onNavigate?: () => void }) {
  * with the active `/p/<id>`, which is not a route. Its own icon (layers, not the per-project
  * checklist) so the two Tasks surfaces never read as the same button.
  */
-function AllTasksLink({ onNavigate }: { onNavigate?: () => void }) {
+function AllTasksLink({ onNavigate, runningCount }: { onNavigate?: () => void; runningCount?: number | null }) {
   const { pathname } = useLocation()
   const isActive = pathname === '/tasks'
   return (
@@ -700,6 +708,7 @@ function AllTasksLink({ onNavigate }: { onNavigate?: () => void }) {
     >
       <LayersIcon className={sidebarSectionIconClass(isActive)} aria-hidden="true" />
       All tasks
+      {runningCount ? <RunningTasksBadge count={runningCount} /> : null}
     </RouterLink>
   )
 }

@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, type ReactNode } from 'react'
 import { useLocation } from 'react-router'
 
-import { useHealth, useProjectRuns, useProjects, useRunsForProject, useSkillsUpdate, useStarCount, useTodos, useWorkspaceConfig } from '@/api/queries'
+import { useHealth, useProjectRuns, useProjects, useRunsForProject, useRunsIndex, useSkillsUpdate, useStarCount, useTodos, useWorkspaceConfig } from '@/api/queries'
 import type { HealthResponse, SkillsUpdateState } from '@open-mercato/cezar-api-client'
 import { AppShell, type RepoChip } from '@/components/app-shell'
 import { CommandPalette } from '@/components/command-palette'
@@ -129,6 +129,16 @@ export const AppShellContainer = memo(function AppShellContainer({ children }: {
   // flat nav + single quick-list it has always had. That degenerate case is the upgrade path:
   // an existing user boots the new version in their usual repo and sees no difference.
   const projects = registry && registry.projects.length > 1 ? registry : null
+  // The All tasks door's spinner badge: how many tasks are running anywhere in the
+  // workspace. The cross-project index is one slim request shared with the palettes and
+  // the Tasks page (same query key), kept live by the workspace stream — no polling
+  // interval, per the cockpit's default. Gated on multi-project like the door itself: a
+  // single project never pays for a badge it cannot show.
+  const runsIndex = useRunsIndex(projects !== null)
+  const runningCount = useMemo(
+    () => (runsIndex.data ? runsIndex.data.runs.filter((run) => run.status === 'running').length : null),
+    [runsIndex.data],
+  )
   const repo = useMemo(
     () => repoChipOf(health.data),
     [health.data?.repo?.root, health.data?.repo?.branch],
@@ -190,6 +200,9 @@ export const AppShellContainer = memo(function AppShellContainer({ children }: {
         // Same `?? null` honesty: no badge while the list is unknown; a loaded list with none
         // unread is 0, which AppShell also renders as no badge.
         unreadCount={runs.data ?? null}
+        // The All tasks spinner badge: unknown is null (no badge), and a quiet workspace is
+        // 0 (also no badge) — the animation only ever mounts while something runs.
+        runningCount={runningCount}
         skillsUpdateAvailable={skillsUpdateAvailable}
         // Shown whenever the remote is a recognized forge, like each project group's tab (#698);
         // a cold or failed probe is the GitHub page's to explain and retry (#1412).

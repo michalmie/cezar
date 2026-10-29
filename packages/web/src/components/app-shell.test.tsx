@@ -510,6 +510,19 @@ describe('AppShell', () => {
       renderShell('/p/shop/', { projectGroups: <p>groups</p> })
       expect(allTasks()!.getAttribute('aria-current')).toBeNull()
     })
+
+    it('carries the running-tasks badge while anything runs, and nothing when quiet', () => {
+      renderShell('/', { projectGroups: <p>groups</p>, runningCount: 3 })
+      const badge = allTasks()!.querySelector('[data-slot="nav-running-badge"]') as HTMLElement
+      expect(badge).not.toBeNull()
+      expect(badge.textContent).toContain('3')
+      cleanup()
+      for (const runningCount of [0, null, undefined]) {
+        renderShell('/', { projectGroups: <p>groups</p>, runningCount })
+        expect(allTasks()!.querySelector('[data-slot="nav-running-badge"]')).toBeNull()
+        cleanup()
+      }
+    })
   })
 
   /**

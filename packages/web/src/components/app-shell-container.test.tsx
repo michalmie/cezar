@@ -407,6 +407,41 @@ describe('sidebar wiring', () => {
     expect(repoChip()).toBeNull()
   })
 
+  it('badges All tasks with the cross-project running count', async () => {
+    const entry = (id: string, status: string) => ({
+      projectId: 'cezar',
+      id,
+      title: id,
+      status,
+      createdAt: '2026-07-21T12:00:00.000Z',
+      archived: false,
+      workflow: 'quick-task',
+      lastActivityAt: '2026-07-21T12:00:00.000Z',
+    })
+    serve({
+      '/api/v1/health': HEALTH,
+      '/api/v1/todos': [],
+      '/api/v1/projects': {
+        projects: [PROJECT, { ...PROJECT, id: 'shop', name: 'shop', lastOpenedAt: '2026-07-19T00:00:00.000Z' }],
+        bootProject: 'cezar',
+        projectsDir: '/home/me/cezar/projects',
+      },
+      '/api/v1/workspace/ui-state': {},
+      '/api/v1/p/cezar/runs': [],
+      '/api/v1/workspace/runs-index': {
+        runs: [entry('r1', 'running'), entry('r2', 'running'), entry('r3', 'done')],
+        referenceStatuses: {},
+        perProjectLimit: 50,
+        truncated: [],
+      },
+    })
+    renderShell()
+
+    await waitFor(() =>
+      expect(document.querySelector('[data-slot="nav-running-badge"]')?.textContent).toContain('2'),
+    )
+  })
+
   it('lists the unregistered launch folder while it is the project on screen (#1432)', async () => {
     // The registry leaves the launch folder out once it holds other projects (#1057); `serve`
     // still opens the cockpit there, so the shell names it as a "not saved" group.
