@@ -58,7 +58,7 @@ import { continuePromptRefusal, messageText, queuedStackRefusal } from './queued
 import {
   attachmentExtension,
   isImageAttachmentName,
-  isImageMediaType,
+  isViewableImageMediaType,
   PENDING_ASK_MAX_QUESTIONS,
   sanitizeAttachmentName,
   storedAttachmentExtension,
@@ -1023,8 +1023,8 @@ export function agentDirectories(
  */
 /** Inverse of `attachmentExtension` (#472) — a persisted attachment is re-encoded from disk at
  *  dequeue and needs its media type back. Only ever asked about IMAGE names (a file reaches the
- *  agent as a path, never as a block), so an unknown extension still answers `image/png`: that is
- *  the pre-existing fallback for the `.img` an SVG or a BMP paste lands as. */
+ *  agent as a path, never as a block), so an unknown extension still answers `image/png`. The
+ *  `.img` an ICO/SVG/BMP paste lands as never reaches this function — it travels as a file. */
 export function mediaTypeFor(name: string): string {
   const ext = name.split('.').pop()?.toLowerCase();
   return ext === 'jpg' ? 'image/jpeg'
@@ -1151,7 +1151,10 @@ export function toPastedContent(
     name?: string;
   },
 ): PastedContent {
-  if (isImageMediaType(attachment.mediaType)) {
+  // Only the viewable four become vision blocks — any other `image/*` subtype (an ICO, an
+  // SVG, a BMP) travels as a file, so the agent gets its path instead of a block no provider
+  // could decode.
+  if (isViewableImageMediaType(attachment.mediaType)) {
     const block: ContentBlock = {
       type: 'image', source: { type: 'base64', media_type: attachment.mediaType, data: attachment.data },
     };

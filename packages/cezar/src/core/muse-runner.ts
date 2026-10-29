@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { isViewableImageMediaType } from '@open-mercato/cezar-contract';
 import { AcpClient, type AcpMessage } from './acp-client.ts';
 import { buildChildEnv } from './agent-env.ts';
 import { isSignalTerminationExit, prependSystemPrompt, trackChildExit,
@@ -181,10 +182,20 @@ class MuseSession implements AgentSession {
       while (this.isOpen && this.queue.length) {
         const content = this.queue.shift();
         if (!content) continue;
+        // An image subtype the model cannot view (an ICO favicon, an SVG) must never reach
+        // `turn/start`: the provider answers 400 and the whole run fails. The engine demotes
+        // those to file paths before they get here; this holds back any that arrive anyway.
+        const sendable = content.filter(block => block.type !== 'image' || isViewableImageMediaType(block.source.media_type));
+        if (sendable.length < content.length) {
+          const kinds = [...new Set(content.flatMap(block =>
+            block.type === 'image' && !isViewableImageMediaType(block.source.media_type) ? [block.source.media_type] : []))].join(', ');
+          this.emit({ type: 'note', message: `Skipped ${content.length - sendable.length} attached image${content.length - sendable.length > 1 ? 's' : ''} the model cannot display (${kinds}).` });
+        }
+        if (!sendable.length) continue;
         const commandId = museCommandId();
         this.outstandingTurns.add(commandId);
         const response = await this.request('turn/start', { sessionId: this.sessionId, commandId, ifBusy: 'queue',
-          input: content.map(block => block.type === 'text' ? { type: 'text', text: block.text } : {
+          input: sendable.map(block => block.type === 'text' ? { type: 'text', text: block.text } : {
             type: 'image', base64Data: block.source.data, mediaType: block.source.media_type,
           }),
         });

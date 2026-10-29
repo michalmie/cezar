@@ -98,7 +98,7 @@ import {
   type ContinueResponse,
   deleteUploadResponseSchema,
   isImageAttachmentName,
-  isImageMediaType,
+  isViewableImageMediaType,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENTS_TOTAL_BASE64,
   stagedUploadSchema,
@@ -1104,7 +1104,7 @@ function resolveAttachments(entries: AttachmentEntry[] | undefined): PastedConte
   for (const entry of entries) {
     const attachment = 'data' in entry ? entry : readUpload(entry.uploadId);
     if (!attachment) return ATTACHMENT_UPLOAD_MISSING;
-    if (isImageMediaType(attachment.mediaType)) imageChars += attachment.data.length;
+    if (isViewableImageMediaType(attachment.mediaType)) imageChars += attachment.data.length;
     out.push(toPastedContent('data' in entry || !entry.name ? attachment : { ...attachment, name: entry.name }));
   }
   if (imageChars > MAX_ATTACHMENTS_TOTAL_BASE64) return ATTACHMENT_IMAGES_TOO_LARGE;

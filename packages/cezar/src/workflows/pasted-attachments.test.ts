@@ -252,7 +252,9 @@ describe('attachment media types, extensions and blocks (#950)', () => {
   it('tells images and files apart by the persisted NAME, which is what every reader branches on', () => {
     expect(isImageAttachmentName('pasted-1.png')).toBe(true);
     expect(isImageAttachmentName('screenshot-9.jpg')).toBe(true);
-    expect(isImageAttachmentName('pasted-2.img')).toBe(true);
+    // `.img` is the catch-all an ICO/SVG/BMP paste lands as — those bytes travel as files, and
+    // re-encoding them as `image/png` is a vision block no provider can decode (BYOV favicon 400).
+    expect(isImageAttachmentName('pasted-2.img')).toBe(false);
     expect(isImageAttachmentName('pasted-3.pdf')).toBe(false);
     expect(isImageAttachmentName('pasted-4.md')).toBe(false);
     expect(isImageAttachmentName('pasted-5.txt')).toBe(false);
@@ -275,6 +277,22 @@ describe('attachment media types, extensions and blocks (#950)', () => {
       mediaType: 'application/pdf',
       data: TINY_PDF_B64,
     });
+  });
+
+  /**
+   * An `image/*` subtype no model backend can view — the BYOV `favicon.ico` sent as
+   * `image/x-icon` failed the whole turn with a provider 400 — must travel as a file (the
+   * agent gets its path) rather than as a vision block no provider could decode.
+   */
+  it('demotes images no backend can view to file blocks and keeps the viewable four as images', () => {
+    for (const mediaType of ['image/png', 'image/jpeg', 'image/gif', 'image/webp']) {
+      expect(toPastedContent({ mediaType, data: TINY_PNG_B64 }).type).toBe('image');
+    }
+    for (const mediaType of ['image/x-icon', 'image/vnd.microsoft.icon', 'image/svg+xml', 'image/bmp', 'image/tiff']) {
+      const block = toPastedContent({ mediaType, data: TINY_PNG_B64 });
+      expect(block.type).toBe('file');
+      if (block.type === 'file') expect(block.mediaType).toBe(mediaType);
+    }
   });
 
   /**
@@ -488,6 +506,8 @@ describe('sanitizeAttachmentName (#929)', () => {
    */
   it("accepts the media type's own subtype as a spelling for an image attachmentExtension does not name", () => {
     expect(sanitizeAttachmentName('diagram.svg', 'image/svg+xml')).toBe('diagram.svg');
+    expect(sanitizeAttachmentName('favicon.ico', 'image/x-icon')).toBe('favicon.ico');
+    expect(sanitizeAttachmentName('favicon.ico', 'image/vnd.microsoft.icon')).toBe('favicon.ico');
     expect(sanitizeAttachmentName('photo.bmp', 'image/bmp')).toBe('photo.bmp');
     expect(sanitizeAttachmentName('scan.TIFF', 'image/tiff')).toBe('scan.tiff');
     expect(sanitizeAttachmentName('scan.tif', 'image/tiff')).toBe('scan.tif');

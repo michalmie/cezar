@@ -886,9 +886,22 @@ export const FILE_ATTACHMENT_MEDIA_TYPES = [
   BINARY_ATTACHMENT_MEDIA_TYPE,
 ] as const;
 
-/** Does this media type travel as an inline image block the model can look at? */
+/** Is this media type accepted at the wire as an image — viewable or not (`isViewableImageMediaType` decides that)? */
 export function isImageMediaType(mediaType: string): boolean {
   return /^image\//.test(mediaType);
+}
+
+/**
+ * Image types every model backend can view inline. Anything else under `image/` — an ICO
+ * favicon, an SVG, a BMP — is still ACCEPTED at the wire (`isImageMediaType` above) but
+ * travels as a file: the agent gets its path, never a vision block no provider could decode
+ * (a BYOV `favicon.ico` sent as `image/x-icon` failed its whole turn with a provider 400).
+ */
+export const VIEWABLE_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
+
+/** Is this an image subtype the backends can actually view, rather than merely accept? */
+export function isViewableImageMediaType(mediaType: string): boolean {
+  return (VIEWABLE_IMAGE_MEDIA_TYPES as readonly string[]).includes(mediaType);
 }
 
 /** Is this something the composer may attach at all — an image, or one of the file types above? */
@@ -929,8 +942,13 @@ export function storedAttachmentExtension(mediaType: string, name?: string): str
   return BINARY_NAME_EXTENSIONS.includes(ext) ? ext : canonical;
 }
 
-/** Extensions `attachmentExtension` produces for an inline image. */
-const IMAGE_ATTACHMENT_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'img']);
+/**
+ * Extensions `attachmentExtension` produces for an inline image the model can view. `img` —
+ * the catch-all for an image subtype cezar does not name (an ICO, an SVG, a BMP) — is
+ * deliberately NOT here: those bytes travel as files, and re-encoding them as `image/png`
+ * is a vision block no provider can decode.
+ */
+const IMAGE_ATTACHMENT_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif']);
 
 /**
  * Does a persisted attachment name (`pasted-3.pdf`, `screenshot-1.png`) refer to an image?
@@ -976,6 +994,8 @@ const ALLOWED_NAME_EXTENSIONS: Record<string, readonly string[]> = {
   'text/x-markdown': ['md', 'markdown'],
   'image/jpeg': ['jpg', 'jpeg'],
   'image/tiff': ['tif', 'tiff'],
+  'image/x-icon': ['ico'],
+  'image/vnd.microsoft.icon': ['ico'],
 };
 
 /** Real spellings of an image subtype `attachmentExtension` does not name individually. A closed

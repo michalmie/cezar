@@ -109,6 +109,24 @@ describe('MuseRunner over the offline MSP peer', () => {
       expect(wire.find(f => f.id === 'server-approval')).toMatchObject({ result: {} });
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
+  it('holds back images the model cannot view instead of failing the turn', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'muse-viewable-wire-')); const log = join(dir, 'wire.ndjson');
+    try {
+      const v1: AgentEvent[] = [];
+      await new MuseRunner({ bin }).run({ ...spec,
+        images: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'viewable' } },
+          { type: 'image', source: { type: 'base64', media_type: 'image/x-icon', data: 'icon-bytes' } },
+        ], env: { CEZ_MUSE_WIRE_LOG: log },
+      }, e => v1.push(e));
+      const wire = readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const input = wire.find(f => f.method === 'turn/start').params.input;
+      expect(input.filter((b: { type: string }) => b.type === 'image')).toEqual([
+        { type: 'image', base64Data: 'viewable', mediaType: 'image/png' },
+      ]);
+      expect(v1).toContainEqual(expect.objectContaining({ type: 'note', message: expect.stringContaining('image/x-icon') }));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
   it('cancels a resumed native input request once despite a duplicate notification', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'muse-resume-wire-')); const log = join(dir, 'wire.ndjson');
     try {
