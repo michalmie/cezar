@@ -44,7 +44,7 @@ export function RunningTasksBadge({ count }: { count: number }) {
     <span
       data-slot="nav-running-badge"
       title={`${count} running ${count === 1 ? 'task' : 'tasks'}`}
-      className="ml-auto flex items-center gap-1 rounded-full bg-violet px-1.5 py-px text-[10.5px] font-semibold text-violet-foreground"
+      className="ml-auto flex items-center gap-1 rounded-full bg-violet px-1.5 py-px text-micro font-semibold text-violet-foreground"
     >
       <span aria-hidden="true">{BRAILLE_SPINNER_FRAMES[frame]}</span>
       <span className="tabular-nums" aria-hidden="true">{count}</span>

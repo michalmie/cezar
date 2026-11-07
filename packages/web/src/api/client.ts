@@ -75,6 +75,11 @@ import type {
   StartNowResponse,
   LandResponse,
   FsBrowseResponse,
+  GithubLoginState,
+  InitProjectGitResponse,
+  PublishProjectGithubInput,
+  PublishProjectGithubResponse,
+  RepoSuggestionsResponse,
   GitCommitResponse,
   GitPushResponse,
   GitStatusResponse,
@@ -271,6 +276,10 @@ function str(value: unknown): string | undefined {
 }
 
 /** Build the ApiError for a non-2xx, preferring the server's own message. */
+/** A 413 with no `{ error }` is a proxy's page — cezar's own answers are JSON (#1735). */
+const PAYLOAD_TOO_LARGE_MESSAGE =
+  'the request was too large for the server, or for a proxy in front of it — attach fewer or smaller files, or raise the proxy body limit (nginx: client_max_body_size 32m)'
+
 function errorFor(status: number, statusText: string, body: string): ApiError {
   const parsed = parseJson(body)
   const json: Json = parsed && typeof parsed === 'object' ? (parsed as Json) : {}
@@ -278,7 +287,7 @@ function errorFor(status: number, statusText: string, body: string): ApiError {
     str(json.error) ??
     // No `{ error }` — a proxy error page, an empty body, a crash. Say what we know rather
     // than leak a page of HTML into a toast.
-    `${status} ${statusText || 'request failed'}`.trim()
+    (status === 413 ? PAYLOAD_TOO_LARGE_MESSAGE : `${status} ${statusText || 'request failed'}`.trim())
   const started = status === 409 ? deferredAlreadyStartedSchema.safeParse(parsed) : undefined
   return new ApiError(status, message, {
     ...(started?.success ? { runIds: started.data.runIds } : {}),
@@ -603,6 +612,40 @@ export async function browseFs(
   )
 }
 
+/** The first-run "Pick a project" list (spec 2026-10-26-first-run-onboarding). */
+export async function getRepoSuggestions(opts?: ReadOptions): Promise<RepoSuggestionsResponse> {
+  return unwrap(await cez.api.v1.fs.repos.$get({}, init(opts)), '/fs/repos')
+}
+
+/** "Initialize git here" — a `not-git` project becomes a repository with its files committed. */
+export async function initProjectGit(projectId: string): Promise<InitProjectGitResponse> {
+  return unwrap(
+    await cez.api.v1.projects[':projectId']['git-init'].$post({ param: { projectId: encodeURIComponent(projectId) } }),
+    `/projects/${encodeURIComponent(projectId)}/git-init`,
+  )
+}
+
+/** "Publish to GitHub" — a local repository with no remote becomes a new private GitHub repo. */
+export async function publishProjectGithub(projectId: string, input: PublishProjectGithubInput): Promise<PublishProjectGithubResponse> {
+  return unwrap(
+    await cez.api.v1.projects[':projectId']['publish-github'].$post({ param: { projectId: encodeURIComponent(projectId) }, json: input }),
+    `/projects/${encodeURIComponent(projectId)}/publish-github`,
+  )
+}
+
+/** The GitHub device flow run by cezar: start (or join the login already waiting), poll, cancel. */
+export async function startGithubLogin(): Promise<GithubLoginState> {
+  return unwrap(await cez.api.v1.github.login.$post(), '/github/login')
+}
+
+export async function getGithubLogin(opts?: ReadOptions): Promise<GithubLoginState> {
+  return unwrap(await cez.api.v1.github.login.$get({}, init(opts)), '/github/login')
+}
+
+export async function cancelGithubLogin(): Promise<GithubLoginState> {
+  return unwrap(await cez.api.v1.github.login.$delete(), '/github/login')
+}
+
 /** The authoritative run list — sorted newest-first by the server. */
 export async function getRuns(opts?: ReadOptions): Promise<ApiRun[]> {
   return unwrap(
@@ -925,7 +968,7 @@ export async function getRunCommit(
 /** Issues + PRs via the logged-in `gh`. Degrades to `{ available: false, reason }` server-side —
  *  an unreachable forge is a hint in the tab, not an ApiError. */
 export async function getGithub(
-  params: { limit?: number; refresh?: boolean; issuesCursor?: string; prsCursor?: string } = {},
+  params: { limit?: number; refresh?: boolean; issuesCursor?: string; prsCursor?: string; issuesDone?: boolean; prsDone?: boolean } = {},
   opts?: ReadOptions,
 ): Promise<GithubData> {
   return unwrap(
@@ -939,6 +982,8 @@ export async function getGithub(
           refresh: params.refresh ? '1' : undefined,
           issuesCursor: params.issuesCursor,
           prsCursor: params.prsCursor,
+          issuesDone: params.issuesDone ? '1' : undefined,
+          prsDone: params.prsDone ? '1' : undefined,
         },
       },
       init(opts),

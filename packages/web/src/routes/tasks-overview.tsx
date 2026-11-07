@@ -32,6 +32,7 @@ import { useRunUsage } from '@/api/global-events'
 import { queryKeys, useHealth, usePinRun, useReferenceProjectId, useRepo, useRuns, writePatchedRunToCaches } from '@/api/queries'
 import type { RunRecord } from '@open-mercato/cezar-api-client'
 import { CenteredState } from '@/components/centered-state'
+import { FirstRun, SetupPill, WelcomeBack } from '@/components/first-run'
 import { DiffStatLabel } from '@/components/diff-stat'
 import { DirectionalUsage } from '@/components/directional-usage'
 import { TitleEditInput, useTitleEditor } from '@/components/editable-title'
@@ -142,12 +143,22 @@ export function TasksOverview({
   gitRepo = true,
   scheduledTasks,
   hasScheduledTasks = !!scheduledTasks,
+  firstRun,
+  setupPill,
+  welcomeBack,
 }: {
   /** Undefined while `/api/runs` has not answered: the header renders, the body stays empty —
    *  an empty state before we know there are no runs would be a lie. */
   runs: RunRecord[] | undefined
   scheduledTasks?: React.ReactNode
   hasScheduledTasks?: boolean
+  /** First-run onboarding (spec 2026-10-26-first-run-onboarding): replaces the plain
+   *  "No tasks yet" state when the route supplies it. Absent, the old state renders. */
+  firstRun?: React.ReactNode
+  /** What is left of setup once tasks exist — rendered above the filter bar. */
+  setupPill?: React.ReactNode
+  /** After a long absence: what the user left and what changed — above the setup pill. */
+  welcomeBack?: React.ReactNode
   view: ListView
   onViewChange: (view: ListView) => void
   onArchiveFinished: () => void
@@ -202,6 +213,7 @@ export function TasksOverview({
   // Session-local like the facets; Recent on every fresh visit.
   const [sortBy, setSortBy] = React.useState<SortBy>('recent')
   const all = runs ?? NO_RUNS
+  const viewHasRuns = React.useMemo(() => all.some((run) => (view === 'archived') === run.archived), [all, view])
   const automations = React.useMemo(() => automationIndex(all), [all])
   // Origin and facets narrow BEFORE everything else, so the tab counts, the queue-free rows and
   // the compare strips all describe the same list the table shows.
@@ -324,15 +336,18 @@ export function TasksOverview({
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search tasks…"
             aria-label="Search tasks"
-            className="h-9 w-full rounded-md border border-input bg-card pr-3 pl-8 text-[13px] text-foreground outline-none placeholder:text-soft-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className="h-9 w-full rounded-md border border-input bg-card pr-3 pl-8 text-ui text-foreground outline-none placeholder:text-soft-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
           />
         </div>
       </header>
       {scheduledTasks}
 
       <div className="flex flex-1 flex-col p-3 pb-[calc(90px+env(safe-area-inset-bottom))] md:p-5 md:pb-5">
-        {/* No bar over the first-run hero: with nothing to narrow, filters are noise. */}
-        {all.length > 0 ? (
+        {/* No bar over the first-run hero: with nothing in this view to narrow, filters are noise —
+            archived history alone must not bring the chrome back over the welcome page. */}
+        {viewHasRuns ? welcomeBack : null}
+        {viewHasRuns ? setupPill : null}
+        {viewHasRuns ? (
           <TasksFilterBar
             runs={all}
             view={view}
@@ -358,6 +373,7 @@ export function TasksOverview({
               filterTaskTable(sortRuns(all, view), 'all', filters, automations).length > 0
             }
             onShowAll={() => onOriginChange('all')}
+            firstRun={firstRun}
           />
         ) : (
           <>
@@ -478,7 +494,7 @@ export function TasksOverview({
             key={group.groupId}
             data-slot="compare-strip"
             data-group-id={group.groupId}
-            className="mt-3.5 flex flex-wrap items-center gap-2.5 rounded-lg border border-border bg-card px-3.5 py-2.5 text-[12.5px] text-muted-foreground shadow-xs"
+            className="mt-3.5 flex flex-wrap items-center gap-2.5 rounded-lg border border-border bg-card px-3.5 py-2.5 text-label text-muted-foreground shadow-xs"
           >
             <ScaleIcon className="size-[15px] shrink-0 text-soft-foreground" aria-hidden="true" />
             <span>
@@ -573,6 +589,7 @@ function TasksEmptyState({
   origin = 'all',
   hiddenByOrigin = false,
   onShowAll = () => undefined,
+  firstRun,
 }: {
   view: ListView
   query: string
@@ -583,6 +600,7 @@ function TasksEmptyState({
   /** The origin split is the only reason this view is empty: switching to All would show rows. */
   hiddenByOrigin?: boolean
   onShowAll?: () => void
+  firstRun?: React.ReactNode
 }) {
   const needle = query.trim()
   const kind = needle
@@ -641,6 +659,8 @@ function TasksEmptyState({
           title="Nothing archived yet"
           subtitle="Finished tasks you archive land here."
         />
+      ) : firstRun ? (
+        firstRun
       ) : (
         <CenteredState
           heading="h2"
@@ -779,7 +799,7 @@ function TasksFilterBar({
       ) : null}
       {/* The all-projects bar's labelled-segmented grammar (its Group by and Sort by). */}
       <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
-      <span className="text-[11px] font-medium text-soft-foreground">Sort by</span>
+      <span className="text-meta font-medium text-soft-foreground">Sort by</span>
       <Segmented slot="sort-by" label="Sort tasks by" value={sortBy} options={SORT_OPTIONS} onChange={onSortByChange} />
     </div>
   )
@@ -809,12 +829,12 @@ function OverviewTab({
       aria-pressed={isActive}
       onClick={() => onSelect(view)}
       className={cn(
-        'flex h-7 items-center justify-center gap-1.5 rounded-[7px] px-3 text-[12.5px] font-medium text-muted-foreground',
+        'flex h-7 items-center justify-center gap-1.5 rounded-[7px] px-3 text-label font-medium text-muted-foreground',
         isActive && 'bg-card font-semibold text-foreground shadow-xs'
       )}
     >
       {children}
-      {count > 0 ? <span className="font-mono text-[11px] tabular-nums">{count}</span> : null}
+      {count > 0 ? <span className="font-mono text-meta tabular-nums">{count}</span> : null}
     </button>
   )
 }
@@ -836,7 +856,7 @@ function Th({
       data-column-id={columnId}
       data-folded={folded || undefined}
       className={cn(
-        'h-[38px] border-b border-border px-2.5 text-left text-[11px] font-semibold tracking-[0.05em] whitespace-nowrap text-soft-foreground uppercase first:pl-4 last:pr-4',
+        'h-[38px] border-b border-border px-2.5 text-left eyebrow whitespace-nowrap text-soft-foreground first:pl-4 last:pr-4',
         right && 'text-right',
         folded && 'px-0 first:pl-0 last:pr-0',
       )}
@@ -928,7 +948,7 @@ function TaskColumnIconView({ icon }: { icon?: TaskColumnIcon }) {
 }
 
 /** A section header's label — the sidebar's bucket header, so `Pinned` reads the same in both. */
-const SECTION_LABEL_CLASS = 'text-[11px] font-semibold tracking-[0.04em] text-soft-foreground uppercase'
+const SECTION_LABEL_CLASS = 'eyebrow text-soft-foreground'
 
 const TD_BASE = 'h-11 border-b border-border px-2.5 whitespace-nowrap first:pl-4 last:pr-4'
 
@@ -1007,7 +1027,7 @@ const TableRow = React.memo(function TableRow({
               data-slot="queue-note"
               data-column-id="cpu-memory"
               colSpan={2}
-              className={cn(TD_BASE, 'text-right font-mono text-[11.5px] text-soft-foreground')}
+              className={cn(TD_BASE, 'text-right font-mono text-meta text-soft-foreground')}
             >
               #{queuePosition} in queue
             </td>
@@ -1112,7 +1132,7 @@ function TaskTableCell({
       )
     case 'workflow':
       return (
-        <td data-column-id={column.id} className={cn(TD_BASE, 'text-[12.5px] text-muted-foreground')}>
+        <td data-column-id={column.id} className={cn(TD_BASE, 'text-label text-muted-foreground')}>
           {workflowLabel(run)}
         </td>
       )
@@ -1219,7 +1239,7 @@ function TitleCell({
   if (editor.editing) {
     return (
       <span className="flex min-w-0 items-center" style={indent}>
-        <TitleEditInput editor={editor} className="text-[13px] font-medium" />
+        <TitleEditInput editor={editor} className="text-ui font-medium" />
       </span>
     )
   }
@@ -1232,7 +1252,7 @@ function TitleCell({
         <span
           aria-hidden="true"
           data-slot="subtask-tick"
-          className="shrink-0 font-mono text-[11px] leading-none text-soft-foreground"
+          className="shrink-0 font-mono text-meta leading-none text-soft-foreground"
         >
           &#9492;
         </span>
@@ -1241,7 +1261,7 @@ function TitleCell({
         to={to}
         title={title}
         className={cn(
-          'min-w-0 truncate text-[13px]',
+          'min-w-0 truncate text-ui',
           unread ? 'font-semibold text-foreground' : readDone ? 'font-medium text-muted-foreground' : 'font-medium'
         )}
       >
@@ -1253,7 +1273,7 @@ function TitleCell({
       {dispatchKindLabel(run) ? (
         <span
           data-slot="dispatch-kind"
-          className="shrink-0 rounded-full bg-muted px-1.5 py-px text-[10.5px] font-medium text-muted-foreground"
+          className="shrink-0 rounded-full bg-muted px-1.5 py-px text-micro font-medium text-muted-foreground"
         >
           {dispatchKindLabel(run)}
         </span>
@@ -1328,7 +1348,7 @@ function UsageTd({ column, cell }: { column: 'cpu' | 'memory'; cell: UsageCell }
         TD_BASE,
         'text-right font-mono tabular-nums',
         cell.kind === 'live' && 'bg-violet/5 text-xs font-medium text-foreground',
-        cell.kind === 'peak' && 'text-[11.5px] text-soft-foreground',
+        cell.kind === 'peak' && 'text-meta text-soft-foreground',
         cell.kind === 'none' && 'text-xs text-soft-foreground'
       )}
     >
@@ -1402,7 +1422,7 @@ const TaskCard = React.memo(function TaskCard({
         <Link
           to={to}
           className={cn(
-            'min-w-0 flex-1 text-[13.5px] leading-[1.35]',
+            'min-w-0 flex-1 text-ui leading-[1.35]',
             unread ? 'font-semibold text-foreground' : readDone ? 'font-medium text-muted-foreground' : 'font-medium'
           )}
         >
@@ -1413,7 +1433,7 @@ const TaskCard = React.memo(function TaskCard({
         {dispatchKindLabel(run) ? (
           <span
             data-slot="dispatch-kind"
-            className="mt-px shrink-0 rounded-full bg-muted px-1.5 py-px text-[10.5px] font-medium text-muted-foreground"
+            className="mt-px shrink-0 rounded-full bg-muted px-1.5 py-px text-micro font-medium text-muted-foreground"
           >
             {dispatchKindLabel(run)}
           </span>
@@ -1428,7 +1448,7 @@ const TaskCard = React.memo(function TaskCard({
             className="mt-px"
           />
         ) : null}
-        <span className="mt-0.5 shrink-0 text-[11.5px] text-soft-foreground tabular-nums">
+        <span className="mt-0.5 shrink-0 text-meta text-soft-foreground tabular-nums">
           <RelativeAge at={sortTimestamp(run, sortBy)} />
         </span>
         {/* Always visible here, not hover-revealed: a card has no hover to speak of on the
@@ -1441,7 +1461,7 @@ const TaskCard = React.memo(function TaskCard({
           />
         ) : null}
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-1.5 font-mono text-[11.5px] font-medium text-muted-foreground tabular-nums">
+      <div className="mt-2 flex flex-wrap items-center gap-1.5 font-mono text-meta font-medium text-muted-foreground tabular-nums">
         <span>{workflowLabel(run)}</span>
         {queuePosition !== null ? (
           <>
@@ -1465,7 +1485,7 @@ const TaskCard = React.memo(function TaskCard({
             {run.diffStat ? (
               <>
                 <Sep />
-                <DiffStatLabel stat={run.diffStat} className="text-[11.5px]" />
+                <DiffStatLabel stat={run.diffStat} className="text-meta" />
               </>
             ) : null}
             {showTokens && hasDirectionalUsage ? (
@@ -1505,7 +1525,7 @@ function Sep() {
 
 function BranchChip({ branch }: { branch: string }) {
   return (
-    <span className="rounded-[6px] bg-muted px-1.5 py-0.5 font-mono text-[11.5px] font-medium text-muted-foreground">
+    <span className="rounded-[6px] bg-muted px-1.5 py-0.5 font-mono text-meta font-medium text-muted-foreground">
       {branch}
     </span>
   )
@@ -1640,6 +1660,11 @@ export function TasksOverviewRoute() {
         onOriginChange={setOrigin}
         gitRepo={gitRepo}
         automationNames={automationNames}
+        // The first run waits for the git answer (a failed read falls back to "git", like the
+        // table does) instead of guessing, so it never shows the welcome page to a plain folder.
+        firstRun={view === 'active' ? <FirstRun gitRepo={repo.data ? repo.data.info !== null : repo.isError ? true : undefined} /> : undefined}
+        setupPill={view === 'active' ? <SetupPill /> : undefined}
+        welcomeBack={view === 'active' ? <WelcomeBack runs={runs.data ?? NO_RUNS} /> : undefined}
       />
     </ReferenceStatusProvider>
   )

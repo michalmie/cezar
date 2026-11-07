@@ -468,6 +468,14 @@ export function parseOwnerName(nameWithOwner: string): { owner: string; name: st
 const listCache = new Map<string, { at: number; limit: number; data: GithubData }>();
 const LIST_CACHE_MAX = 50;
 const CACHE_MS = 60_000;
+
+/** A sign-in changes what every cached `unavailable` answer means: a GitHub tab that cached "gh is
+ *  not authenticated" would keep saying so for a minute after the user just signed in. Called by
+ *  the login route the moment `gh` exits 0; the signed-in state is the only thing that moves. */
+export function forgetGithubListCache(): void {
+  listCache.clear();
+  enterpriseHostByRoot.clear();
+}
 export const GH_MAX_LIMIT = 1000;
 /** GitHub GraphQL rejects `first` above 100 (EXCESSIVE_PAGINATION); larger limits page. */
 const GH_GRAPHQL_PAGE_MAX = 100;
@@ -489,6 +497,7 @@ query ($owner: String!, $name: String!, $issuesLimit: Int!, $prsLimit: Int!, $is
 }`;
 
 type GithubListPage = ReturnType<typeof parseGithubListPage>;
+type GithubListCursors = { issuesCursor?: string; prsCursor?: string; issuesDone?: boolean; prsDone?: boolean };
 
 /** Walks both open connections up to `limit` rows each, at most `GH_GRAPHQL_PAGE_MAX` per request,
  *  keeping each side's cursor exact so the returned next cursors resume where the rows stop. */
@@ -497,12 +506,13 @@ export async function fetchGithubListPages(
   owner: string,
   name: string,
   limit: number,
-  cursors: { issuesCursor?: string; prsCursor?: string } = {},
+  cursors: GithubListCursors = {},
 ): Promise<GithubListPage> {
   let issuesCursor = cursors.issuesCursor;
   let prsCursor = cursors.prsCursor;
-  let issuesDone = false;
-  let prsDone = false;
+  // An exhausted side must stay exhausted: a missing cursor alone means "first page" (#1750).
+  let issuesDone = cursors.issuesDone === true;
+  let prsDone = cursors.prsDone === true;
   let result: GithubListPage | null = null;
   while (!result || !issuesDone || !prsDone) {
     const issuesSize = issuesDone ? 0 : Math.min(GH_GRAPHQL_PAGE_MAX, limit - (result?.issues.nodes.length ?? 0));
@@ -535,6 +545,9 @@ export async function fetchGithubListPages(
     }
     result = acc;
   }
+  // A side skipped from the start fetched `first: 0`; its pageInfo says nothing about exhaustion.
+  if (cursors.issuesDone) result.issues.pageInfo = { ...result.issues.pageInfo, hasNextPage: false };
+  if (cursors.prsDone) result.pullRequests.pageInfo = { ...result.pullRequests.pageInfo, hasNextPage: false };
   return result;
 }
 
@@ -542,11 +555,11 @@ export async function fetchGithub(
   repoRoot: string,
   refresh = false,
   limit = 30,
-  cursors: { issuesCursor?: string; prsCursor?: string } = {},
+  cursors: GithubListCursors = {},
 ): Promise<GithubData> {
   if (process.env.CEZ_DRY_RUN === '1') return mockGithubPage(limit, cursors);
   const capped = Math.min(Math.max(limit, 1), GH_MAX_LIMIT);
-  const cacheKey = `${repoRoot}\0${cursors.issuesCursor ?? ''}\0${cursors.prsCursor ?? ''}`;
+  const cacheKey = `${repoRoot}\0${cursors.issuesCursor ?? ''}\0${cursors.prsCursor ?? ''}\0${cursors.issuesDone ? 1 : 0}${cursors.prsDone ? 1 : 0}`;
   const hit = listCache.get(cacheKey);
   if (!refresh && hit && Date.now() - hit.at < CACHE_MS && hit.limit >= capped) {
     return hit.data;
@@ -697,12 +710,14 @@ const ghSearchHitSchema = ghIssueSchema.extend({
   commentsCount: z.number().default(0),
 });
 
-/** `gh {issue,pr} view <n> --json …` — the exact-number path. Shares `ghIssueSchema`'s core;
- *  `isDraft`/`additions`/`deletions` are PR-only and default harmlessly for issues. */
-const ghViewHitSchema = ghIssueSchema.extend({
+/** The bounded metadata shape returned by the exact-number REST lookup. GitHub's REST issue and
+ * pull-request resources expose `comments` as a numeric count, unlike `gh view --json comments`,
+ * which serializes every comment body. */
+const ghNumericHitSchema = ghIssueSchema.extend({
   isDraft: z.boolean().default(false),
   additions: z.number().default(0),
   deletions: z.number().default(0),
+  commentsCount: z.number().int().nonnegative().default(0),
 });
 
 function urlKind(url: string): 'issue' | 'pr' | null {
@@ -712,11 +727,12 @@ function urlKind(url: string): 'issue' | 'pr' | null {
 }
 
 /** Flatten one validated hit into the `ForgeItem` the tab's rows already render. `checks: null`
- *  is what the list tier ships too since #664 — the glyph hydrates lazily via `/api/github/checks`
- *  — so a searched row and a listed row are indistinguishable to the UI. */
+ *  is what the list tier ships too since #664 — the glyph hydrates lazily via `/api/github/checks`.
+ *  Both search paths carry comment counts now; text-search PR rows intentionally omit additions /
+ *  deletions because supplying them would require one expensive view lookup per result. */
 function toSearchItem(
   kind: 'issue' | 'pr',
-  hit: z.infer<typeof ghSearchHitSchema> | z.infer<typeof ghViewHitSchema>,
+  hit: z.infer<typeof ghSearchHitSchema> | z.infer<typeof ghNumericHitSchema>,
   labelColors: Record<string, string>,
 ): ForgeItem {
   for (const label of hit.labels) {
@@ -731,7 +747,7 @@ function toSearchItem(
     labels: hit.labels.map((l) => l.name),
     body: (hit.body ?? '').slice(0, 8_000),
     url: hit.url,
-    comments: 'commentsCount' in hit ? hit.commentsCount : 0,
+    comments: hit.commentsCount,
   };
   if (kind === 'pr') {
     item.isDraft = hit.isDraft;
@@ -793,15 +809,20 @@ export async function searchGithubItems(
       // user input reaching an argv, so it is normalized rather than passed through verbatim.
       const number = Number(numeric);
       try {
+        // Use the REST resource's numeric `comments` field. `gh issue/pr view --json comments`
+        // returns every comment body, so a popular issue would turn this one-result lookup into
+        // an unbounded response. jq reshapes the bounded REST metadata to the shared schema while
+        // retaining one subprocess for the numeric lookup.
+        const jq =
+          '{number,title,author:{login:.user.login},createdAt:.created_at,labels,url:.html_url,body,commentsCount:(.comments // 0),isDraft:(.draft // false),additions:(.additions // 0),deletions:(.deletions // 0)}';
         const out = await gh(repoRoot, [
-          kind === 'pr' ? 'pr' : 'issue',
-          'view',
-          String(number),
-          '--json',
-          kind === 'pr' ? `${SEARCH_FIELDS},isDraft,additions,deletions` : SEARCH_FIELDS,
+          'api',
+          `repos/{owner}/{repo}/${kind === 'pr' ? 'pulls' : 'issues'}/${number}`,
+          '--jq',
+          jq,
         ]);
-        const hit = ghViewHitSchema.parse(JSON.parse(out));
-        // GitHub's `issue view` endpoint accepts a PR number because PRs are issues too. The
+        const hit = ghNumericHitSchema.parse(JSON.parse(out));
+        // GitHub's issues endpoint accepts a PR number because PRs are issues too. The
         // requested tab kind is still part of the search contract, so verify the canonical URL
         // before flattening; a wrong-kind hit falls through to the normal text search.
         const actualKind = urlKind(hit.url);
@@ -896,20 +917,20 @@ function mockGithub(): GithubData {
   };
 }
 
-function mockGithubPage(limit: number, cursors: { issuesCursor?: string; prsCursor?: string }): GithubData {
+function mockGithubPage(limit: number, cursors: GithubListCursors): GithubData {
   const full = mockGithub();
   const issueStart = Number(cursors.issuesCursor ?? 0);
   const prStart = Number(cursors.prsCursor ?? 0);
-  const issues = full.issues.slice(issueStart, issueStart + limit);
-  const prs = full.prs.slice(prStart, prStart + limit);
+  const issues = cursors.issuesDone ? [] : full.issues.slice(issueStart, issueStart + limit);
+  const prs = cursors.prsDone ? [] : full.prs.slice(prStart, prStart + limit);
   return {
     ...full,
     issues,
     prs,
     issuesTotal: full.issues.length,
     prsTotal: full.prs.length,
-    issuesNextCursor: issueStart + issues.length < full.issues.length ? String(issueStart + issues.length) : null,
-    prsNextCursor: prStart + prs.length < full.prs.length ? String(prStart + prs.length) : null,
+    issuesNextCursor: !cursors.issuesDone && issueStart + issues.length < full.issues.length ? String(issueStart + issues.length) : null,
+    prsNextCursor: !cursors.prsDone && prStart + prs.length < full.prs.length ? String(prStart + prs.length) : null,
   };
 }
 
@@ -1520,6 +1541,42 @@ export async function fetchGithubChecks(repoRoot: string, numbers: number[]): Pr
         ? 'gh CLI not found — install it and run `gh auth login`'
         : firstLine(message),
     };
+  }
+}
+
+export type HeadChecksVerdict =
+  | { kind: 'unavailable' }
+  | { kind: 'stale'; headOid: string }
+  | { kind: 'conflict' }
+  | { kind: 'checks'; glyph: ChecksGlyph };
+
+/**
+ * CI verdict for one exact commit of a PR (#1533), never the 60 s PR-number cache: `stale` while
+ * the PR's head is not `sha` yet (a push not landed), `conflict` for a CONFLICTING PR at that head,
+ * else the rollup for `sha` itself. Offline or gh logged out is `unavailable`, not a verdict.
+ */
+export async function fetchPrHeadChecks(repoRoot: string, number: number, sha: string): Promise<HeadChecksVerdict> {
+  try {
+    const pr = JSON.parse(await gh(repoRoot, ['pr', 'view', String(number), '--json', 'headRefOid,mergeable'])) as {
+      headRefOid?: unknown;
+      mergeable?: unknown;
+    };
+    if (typeof pr.headRefOid !== 'string' || !pr.headRefOid) return { kind: 'unavailable' };
+    if (pr.headRefOid.toLowerCase() !== sha.toLowerCase()) return { kind: 'stale', headOid: pr.headRefOid };
+    if (pr.mergeable === 'CONFLICTING') return { kind: 'conflict' };
+    const ownerName = parseOwnerName(await gh(repoRoot, ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner']));
+    if (!ownerName) return { kind: 'unavailable' };
+    const runGraphql: GraphqlRunner = (query, variables) => {
+      const args = ['api', 'graphql', '-f', `query=${query}`];
+      for (const [key, value] of Object.entries(variables)) args.push('-f', `${key}=${value}`);
+      return gh(repoRoot, args);
+    };
+    const checks = await fetchCommitChecks(runGraphql, ownerName.owner, ownerName.name, [sha]);
+    // The query failed or the SHA is unknown to GitHub yet: keep polling, do not guess.
+    if (!(sha in checks)) return { kind: 'unavailable' };
+    return { kind: 'checks', glyph: checks[sha] ?? null };
+  } catch {
+    return { kind: 'unavailable' };
   }
 }
 
