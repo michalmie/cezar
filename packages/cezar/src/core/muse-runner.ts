@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { isViewableImageMediaType } from '@open-mercato/cezar-contract';
 import { AcpClient, type AcpMessage } from './acp-client.ts';
 import { buildChildEnv } from './agent-env.ts';
-import { isSignalTerminationExit, prependSystemPrompt, trackChildExit,
+import { assertReasoningEffortSupported, isSignalTerminationExit, prependSystemPrompt, trackChildExit,
   type AgentEvent, type AgentRunResult, type AgentRunSpec, type AgentRunner,
   type AgentSession, type AgentToolCallRecord, type ContentBlock, type SessionOptions } from './agent-runner.ts';
 import { disclaimedCommand } from './disclaim-spawn.ts';
@@ -28,6 +28,7 @@ export class MuseRunner implements AgentRunner {
   }
   async interrupt(): Promise<void> { this.lastSession?.interrupt(); }
   startSession(spec: AgentRunSpec, onEvent?: (event: AgentEvent) => void, opts: SessionOptions = {}): AgentSession {
+    assertReasoningEffortSupported('muse', spec.reasoningEffort);
     const session = new MuseSession(resolveMuseBin(this.options.bin), spec, onEvent, opts, this.options.timeoutMs);
     this.lastSession = session;
     return session;

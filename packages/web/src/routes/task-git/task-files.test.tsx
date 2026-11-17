@@ -35,6 +35,7 @@ const RUN: ApiRun = {
 
 const HEALTH: HealthResponse = {
   version: '0.0.0-test',
+  runtimeId: '00000000-0000-4000-8000-000000000001',
   projects: [],
   bootProject: 'default',
   repoRoot: '/repo',
@@ -129,6 +130,11 @@ describe('the Files tab route', () => {
       (el) => (el as HTMLElement).dataset.path,
     )
     expect(rows).toEqual(['src', 'big.txt', 'blob.dat', 'hello.ts', 'logo.png'])
+    // The image is listed, after the source files and in the tertiary ink (redesign 2026-11).
+    const logo = document.querySelector<HTMLElement>('[data-slot="files-file"][data-path="logo.png"]')!
+    expect(logo.dataset.junk).toBe('true')
+    expect(logo.className).toContain('text-soft-foreground')
+    expect(document.querySelector<HTMLElement>('[data-slot="files-file"][data-path="hello.ts"]')!.dataset.junk).toBeUndefined()
     // Nothing selected yet — the pane says so instead of pretending.
     expect(screen.getByRole('heading', { level: 2, name: 'Select a file' })).toBeTruthy()
     // Desktop only: the tree owns its scroller so a deep tree never drags the preview along.

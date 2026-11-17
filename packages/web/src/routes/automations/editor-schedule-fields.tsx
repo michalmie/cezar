@@ -43,11 +43,13 @@ export function EditorScheduleFields({
   schedule,
   timeZone,
   onChange,
+  allowOnce = true,
 }: {
   schedule: AutomationSchedule
   /** The server's zone — what the schedule is evaluated in. */
   timeZone: string
   onChange: (schedule: AutomationSchedule) => void
+  allowOnce?: boolean
 }) {
   const s = normalizeSchedule(schedule)
   const set = (patch: Partial<AutomationSchedule>) => {
@@ -61,7 +63,7 @@ export function EditorScheduleFields({
   return (
     <div data-slot="editor-schedule" className="flex flex-col gap-3.5">
       <div role="group" aria-label="Schedule type" className="flex flex-wrap gap-1.5">
-        {TYPES.map(([value, label]) => (
+        {TYPES.filter(([value]) => allowOnce || value !== 'once').map(([value, label]) => (
           <Chip key={value} active={s.type === value} aria-pressed={s.type === value} onClick={() => set({ type: value })}>
             {label}
           </Chip>
@@ -127,15 +129,15 @@ export function EditorScheduleFields({
             onChange={(event) => set({ minute: Math.min(59, Math.max(0, Number(event.target.value) || 0)) })}
             className="w-14 text-center font-mono"
           />
-          <span className="font-mono text-xs">{timeZone}</span>
+          <span className="text-label">{timeZone}</span>
         </div>
       )}
       {s.type === 'once' ? (
-        <p data-slot="editor-once-note" className={`m-0 text-xs ${passed ? 'text-danger' : 'text-soft-foreground'}`}>
+        <p data-slot="editor-once-note" className={`m-0 text-label ${passed ? 'text-danger' : 'text-muted-foreground'}`}>
           {passed ? 'This time has passed — pick a later one to enable it.' : 'Runs a single time, then pauses itself.'}
         </p>
       ) : (
-        <div className="flex items-center gap-2.5 font-mono text-xs text-soft-foreground">
+        <div className="flex items-center gap-2.5 text-label text-soft-foreground">
           <span>cron</span>
           <BranchChip data-slot="editor-cron">{cronOf(schedule)}</BranchChip>
         </div>

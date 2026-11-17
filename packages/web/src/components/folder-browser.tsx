@@ -6,6 +6,8 @@ import { useFsBrowse } from '@/api/queries'
 import type { FsBrowseDir } from '@open-mercato/cezar-api-client'
 import { parentDir } from '@/lib/fs-path'
 import { cn } from '@/lib/utils'
+import { LoadingState } from '@/components/loading-state'
+import { Skeleton } from '@/components/ui/skeleton'
 
 /** System Settings ▸ Privacy & Security ▸ Files & Folders. */
 const PRIVACY_SETTINGS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders'
@@ -61,13 +63,29 @@ export function FolderBrowser({
   return (
     <>
       {/* The breadcrumb is the server's realpath'd answer, not the spelling we asked for. */}
-      <p
-        data-slot="fs-breadcrumb"
-        className="truncate font-mono text-meta text-soft-foreground"
-        title={listing.data?.path ?? undefined}
-      >
-        {listing.data?.path ?? (listing.isError ? '' : 'Loading…')}
-      </p>
+      {listing.data || listing.isError ? (
+        <p
+          data-slot="fs-breadcrumb"
+          className="truncate font-mono text-meta text-soft-foreground"
+          title={listing.data?.path ?? undefined}
+        >
+          {listing.data?.path ?? ''}
+        </p>
+      ) : (
+        <LoadingState label="Loading folder…" data-slot="fs-breadcrumb">
+          <Skeleton className="my-[3px] h-3 w-48 max-w-full" />
+        </LoadingState>
+      )}
+
+      {!listing.isError && listing.data?.parent === null ? (
+        <p data-slot="fs-root-hint" className="text-label text-soft-foreground">
+          This is the browse root. To browse elsewhere, change{' '}
+          {/* A document navigation also dismisses pickers owned above the route (#1688). */}
+          <a href="/settings/global/projects" className="text-foreground underline underline-offset-4 hover:text-muted-foreground">
+            Default browse folder in Settings → Projects
+          </a>.
+        </p>
+      ) : null}
 
       {listing.isError ? (
         <div className="flex min-w-0 flex-col gap-2">

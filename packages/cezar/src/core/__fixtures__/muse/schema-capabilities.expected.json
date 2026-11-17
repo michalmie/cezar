@@ -123,7 +123,7 @@
       "id": "child",
       "name": "subagent",
       "toolKind": "task",
-      "title": "subagent",
+      "title": "Task",
       "status": "running"
     }
   },
@@ -134,7 +134,7 @@
       "id": "child",
       "name": "subagent",
       "toolKind": "task",
-      "title": "subagent",
+      "title": "Task",
       "status": "completed"
     }
   },
