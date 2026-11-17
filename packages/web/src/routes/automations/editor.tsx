@@ -3,14 +3,16 @@ import { useQueryClient } from '@tanstack/react-query'
 import { ArrowLeftIcon, FileTextIcon, LayoutTemplateIcon, Settings2Icon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
-import type { AutomationListEntry, AutomationsResponse } from '@open-mercato/cezar-api-client'
-import { ApiError, createAutomation, updateAutomation } from '@/api/client'
+import { MAX_AUTOMATION_SCHEDULES, type AutomationListEntry, type AutomationsResponse } from '@open-mercato/cezar-api-client'
+import { ApiError, createAutomation, setAutomationReport, updateAutomation } from '@/api/client'
+import { useManagers } from '@/api/managers'
 import { useHealth, useRepo, useSkills, useUiState, useWorkflows } from '@/api/queries'
 import { Chip } from '@/components/chip'
 import { GithubIcon } from '@/components/icons'
 import { OnboardingStepRail, SelectTile } from '@/components/onboarding-kit'
 import { Pill } from '@/components/pill'
 import { Button } from '@/components/ui/button'
+import { IconTooltip } from '@/components/ui/icon-tooltip'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -21,6 +23,7 @@ import { orderSkillsByUsage } from '@/lib/skills'
 import { cn } from '@/lib/utils'
 import { settingsSectionPath } from '@/routes/settings/settings-shell'
 
+import { automationState } from './automation-state'
 import { CopyAsCliCard } from './copy-as-cli-card'
 import { EditorDispatchRow } from './editor-dispatch-row'
 import {
@@ -39,7 +42,8 @@ import { EditorGithubFields } from './editor-github-fields'
 import { EditorRunAs } from './editor-run-as'
 import { EditorScheduleFields } from './editor-schedule-fields'
 import { PLACEHOLDERS, draftSentence, railSteps } from './editor-sentence'
-import { LastRunCard } from './last-run-card'
+import { ManagerReportCard } from './manager-report-card'
+import { RecentRunsCard } from './recent-runs-card'
 import { NextRunsPreview } from './next-runs-preview'
 import { TemplatePalette } from './template-palette'
 import { automationsQueryKey, type AutomationActions } from './use-automations'
@@ -200,6 +204,23 @@ export function AutomationEditor({ data, automation, actions, initialKind, onBac
   }
 
   const reload = () => void queryClient.invalidateQueries({ queryKey: automationsQueryKey() })
+  const managersOn = health.data?.capabilities.managers === true
+  const managers = useManagers(managersOn && !!automation)
+  const [linking, setLinking] = useState(false)
+  const [linkError, setLinkError] = useState<string | null>(null)
+  const relink = async (report: Parameters<typeof setAutomationReport>[1]) => {
+    if (!automation) return
+    setLinking(true)
+    setLinkError(null)
+    try {
+      await setAutomationReport(automation.id, report)
+      await queryClient.invalidateQueries({ queryKey: automationsQueryKey() })
+    } catch (failure) {
+      setLinkError(failure instanceof Error ? failure.message : String(failure))
+    } finally {
+      setLinking(false)
+    }
+  }
   const saveLabel = automation ? 'Save changes' : draft.enabled ? 'Save and enable' : 'Save paused'
   const kindLocked = 'Change the kind by creating a new automation'
   const editing = !!automation
@@ -217,7 +238,9 @@ export function AutomationEditor({ data, automation, actions, initialKind, onBac
         </Button>
         <h1 className="truncate text-base font-semibold">{automation ? 'Edit automation' : 'New automation'}</h1>
         {automation ? (
-          <Pill dot={automation.enabled ? 'success' : 'neutral'}>{automation.enabled ? 'enabled' : 'paused'}</Pill>
+          <Pill dot={automationState(automation, githubAvailable).tone} pulse={automationState(automation, githubAvailable).pulse}>
+            {automationState(automation, githubAvailable).label}
+          </Pill>
         ) : null}
         <span className="flex-1" />
         {!automation ? (
@@ -321,7 +344,27 @@ export function AutomationEditor({ data, automation, actions, initialKind, onBac
             </div>
             <div className="mt-5">
               {draft.kind === 'schedule' ? (
-                <EditorScheduleFields schedule={draft.schedule} timeZone={timeZone} onChange={(schedule) => patch({ schedule })} />
+                <div className="flex flex-col gap-4">
+                  {[draft.schedule, ...(draft.schedules?.slice(1) ?? [])].map((schedule, index, schedules) => (
+                    <fieldset key={index} className="min-w-0 rounded-md border p-3">
+                      <legend className="px-1 text-label text-muted-foreground">Schedule {index + 1}</legend>
+                      <EditorScheduleFields schedule={schedule} timeZone={timeZone} allowOnce={schedules.length === 1} onChange={(value) => {
+                        const next = schedules.map((item, i) => i === index ? value : item)
+                        const first = next[0]
+                        if (first) patch({ schedule: first, schedules: next.length > 1 ? next : undefined })
+                      }} />
+                      {schedules.length > 1 ? <Button variant="ghost" size="sm" aria-label={`Remove schedule ${index + 1}`} onClick={() => {
+                        const next = schedules.filter((_, i) => i !== index)
+                        const first = next[0]
+                        if (first) patch({ schedule: first, schedules: next.length > 1 ? next : undefined })
+                      }}>Remove schedule</Button> : null}
+                    </fieldset>
+                  ))}
+                  <Button variant="outline" size="sm" disabled={(draft.schedules?.length ?? 1) >= MAX_AUTOMATION_SCHEDULES || draft.schedule.type === 'once'} onClick={() => patch({
+                    schedules: [draft.schedule, ...(draft.schedules?.slice(1) ?? []), { type: 'daily', hour: 4, minute: 0 }],
+                  })}>Add schedule</Button>
+                  <p className="text-label text-muted-foreground">Times that coincide start one task. One-time schedules run on their own.</p>
+                </div>
               ) : draft.kind === 'tracker' ? (
                 <EditorTrackerFields trigger={draft.trackerTrigger} intervalSeconds={draft.intervalSeconds} onChange={patch} onValid={setTrackerValid} />
               ) : (
@@ -337,17 +380,17 @@ export function AutomationEditor({ data, automation, actions, initialKind, onBac
             {/* A poll already says how it polls in its own sentence; the schedule's next runs are the preview worth a card. */}
             {draft.kind === 'schedule' ? (
               <div className="mt-5">
-                <NextRunsPreview kind={draft.kind} schedule={draft.schedule} intervalSeconds={draft.intervalSeconds} timeZone={timeZone} />
+                <NextRunsPreview kind={draft.kind} schedule={draft.schedule} schedules={draft.schedules} intervalSeconds={draft.intervalSeconds} timeZone={timeZone} />
               </div>
             ) : null}
             {error?.section === 'when' ? <InlineAlert>{error.message}</InlineAlert> : null}
           </Section>
 
           <Section slot="what" title="What the agent does" why="The same words you would type into New task. Placeholders fill in per run.">
-            <div data-slot="editor-placeholders" className="flex flex-wrap items-center gap-1.5 text-xs text-soft-foreground">
+            <div data-slot="editor-placeholders" className="flex flex-wrap items-center gap-1.5 text-label text-muted-foreground">
               Insert
               {PLACEHOLDERS[draft.kind].map((token) => (
-                <Chip key={token} className="h-6 font-mono text-meta" title={`Insert ${token} at the caret`} onClick={() => insertPlaceholder(token)}>
+                <Chip key={token} className="h-6 font-mono text-meta" onClick={() => insertPlaceholder(token)}>
                   {token}
                 </Chip>
               ))}
@@ -361,13 +404,16 @@ export function AutomationEditor({ data, automation, actions, initialKind, onBac
               onChange={(event) => patch({ prompt: event.target.value })}
               className="mt-3 min-h-[120px] rounded-xl px-4 py-3 text-lead leading-[1.55] md:text-lead"
             />
-            <div data-slot="editor-prompt-templates" className="mt-3 flex flex-wrap items-center gap-1.5 text-xs text-soft-foreground">
+            <div data-slot="editor-prompt-templates" className="mt-3 flex flex-wrap items-center gap-1.5 text-label text-muted-foreground">
               <FileTextIcon aria-hidden="true" className="size-3" />
               Prompt templates
               {promptTemplates.map((template) => (
-                <Chip key={template.id} className="h-6 text-meta" title={template.text} onClick={() => insertPrompt(template.text)}>
-                  {template.label}
-                </Chip>
+                // One line of the template as the tooltip — the full text lands in the prompt.
+                <IconTooltip key={template.id} label={firstLine(template.text)}>
+                  <Chip className="h-6 text-meta" onClick={() => insertPrompt(template.text)}>
+                    {template.label}
+                  </Chip>
+                </IconTooltip>
               ))}
               <Chip
                 dashed
@@ -405,14 +451,14 @@ export function AutomationEditor({ data, automation, actions, initialKind, onBac
                 skillUsage={skillUsage}
                 workflows={workflowList}
                 onSource={(source) => patch(pickSource(source))}
-                pick={{ runner: draft.runner, model: draft.model, account: draft.account }}
-                onPick={(pick) => patch({ runner: pick.runner, model: pick.model, account: pick.account })}
+                pick={{ runner: draft.runner, model: draft.model, reasoningEffort: draft.reasoningEffort, account: draft.account }}
+                onPick={(pick) => patch({ runner: pick.runner, model: pick.model, reasoningEffort: pick.reasoningEffort ?? null, account: pick.account })}
                 baseBranch={baseBranch}
                 autonomous={draft.autonomous}
                 onAutonomous={(autonomous) => patch({ autonomous })}
               />
             </div>
-            <p className="mt-3 mb-0 text-xs leading-[1.5] text-soft-foreground">
+            <p className="mt-3 mb-0 text-label leading-[1.5] text-muted-foreground">
               Each run is an ordinary cezar task in its own worktree — it queues behind the parallel cap like anything else and never auto-merges.
             </p>
             <div className="mt-3">
@@ -451,11 +497,20 @@ export function AutomationEditor({ data, automation, actions, initialKind, onBac
                   Preview saved matches
                 </Button>
               ) : null}
-              {automation?.lastRun ? (
-                <LastRunCard
-                  lastRun={automation.lastRun}
+              {automation && (managersOn || automation.report) ? (
+                <ManagerReportCard
+                  report={automation.report}
+                  managers={managers.data?.managers}
+                  busy={linking}
+                  onChange={(report) => void relink(report)}
+                />
+              ) : null}
+              {linkError ? <InlineAlert>{linkError}</InlineAlert> : null}
+              {automation ? (
+                <RecentRunsCard
+                  automationId={automation.id}
                   busy={actions?.busy}
-                  onRunNow={() => void actions?.runNow(automation)}
+                  onRunNow={actions ? () => void actions.runNow(automation) : undefined}
                   onLog={onLog}
                 />
               ) : null}
@@ -465,6 +520,12 @@ export function AutomationEditor({ data, automation, actions, initialKind, onBac
       </div>
     </div>
   )
+}
+
+/** The first non-empty line of a template, clipped — a tooltip is one line. */
+function firstLine(text: string): string {
+  const line = text.split('\n').map((part) => part.trim()).find(Boolean) ?? ''
+  return line.length > 90 ? `${line.slice(0, 89)}…` : line
 }
 
 /** One part of the sentence: a light title, one line on why, the controls — split by hairlines. */

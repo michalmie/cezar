@@ -18,8 +18,10 @@ import * as React from 'react'
 import { useNavigate as useGlobalNavigate } from 'react-router'
 
 import { ApiError } from '@/api/client'
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import {
   useConfig,
+  useAgentSetup,
   useConnectAgentAccount,
   useGithubLogin,
   useGithubOwners,
@@ -38,8 +40,9 @@ import {
   useWorkspaceUiState,
 } from '@/api/queries'
 import { useProjectScope } from '@/api/project-scope-context'
-import type { GithubItem, ProviderId, RepoSuggestion, RunRecord } from '@open-mercato/cezar-api-client'
+import type { AgentSetupState, GithubItem, ProviderId, RepoSuggestion, RunRecord } from '@open-mercato/cezar-api-client'
 import { AddProjectDialog } from '@/components/add-project-dialog'
+import { AgentSetupList, agentSetupHeading } from '@/components/agent-setup'
 import { CloneProjectDialog } from '@/components/clone-project-dialog'
 import { CreateProjectDialog } from '@/components/create-project-dialog'
 import { DialogErrorBoundary } from '@/components/dialog-error-boundary'
@@ -76,6 +79,7 @@ import {
   type FeaturePreviewId,
   type SetupStep,
 } from '@/lib/onboarding'
+import { agentSetupListRows } from '@/lib/agent-setup'
 import { Link, useNavigate } from '@/lib/project-router'
 import { newTaskPrefillHref } from '@/routes/new-task-params'
 import { shortAge } from '@/lib/format'
@@ -100,7 +104,7 @@ export function FirstRun({ gitRepo }: { gitRepo: boolean | undefined }) {
   // Nothing until the agent answer is in: a welcome that flips to "sign in" a moment later is worse
   // than a short blank.
   if (providers.data === undefined && !skipped) return null
-  if (hasSignedInAgent(providers.data) === false && !skipped) return <SignInToAgent />
+  if (hasSignedInAgent(providers.data) === false && !skipped) return <AgentStep />
   // The same for git: a welcome that flips to "pick a project" once `/repo` answers is a flash of
   // the wrong page.
   if (gitRepo === undefined) return null
@@ -825,6 +829,51 @@ export function SetupPill() {
 
 // ---- A2: nothing signed in -------------------------------------------------------------------
 
+/** Set the agent up here when this cockpit can open a terminal on the user's machine; otherwise the
+ *  commands to run elsewhere. Blank until the answer is in, like the rest of the first run. */
+function AgentStep() {
+  const setup = useAgentSetup()
+  if (setup.isPending) return null
+  return setup.data?.available ? <SetUpAgentHere setup={setup.data} /> : <SignInToAgent />
+}
+
+function SetUpAgentHere({ setup }: { setup: Extract<AgentSetupState, { available: true }> }) {
+  const providers = useProviderStatus()
+  const refresh = useRefreshProviderStatus()
+  const write = useOnboardingWrite()
+  const nothingToOffer = agentSetupListRows(setup, providers.data).length === 0
+  return (
+    <Page
+      title={agentSetupHeading(setup, providers.data)}
+      slot="sign-in"
+      step="agent"
+      why="cezar installs the coding agent and signs you in, right here. No API key needed."
+    >
+      {nothingToOffer ? (
+        <div data-slot="agents-off" className="mt-7 flex w-full flex-col gap-3 rounded-xl border border-border bg-card p-4 text-left sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-body text-foreground">All agents are turned off.</span>
+          <Button asChild size="sm" className="font-normal">
+            <Link to="/settings/agents#providers">Turn one on</Link>
+          </Button>
+        </div>
+      ) : (
+        <AgentSetupList setup={setup} status={providers.data} />
+      )}
+      <div className="mt-7 flex flex-wrap justify-center gap-5">
+        <button type="button" onClick={() => refresh.mutate()} disabled={refresh.isPending} className={quiet}>
+          {refresh.isPending ? 'Checking…' : 'Check again'}
+        </button>
+        <Link to="/settings/agents" className={quiet}>
+          Other agents
+        </Link>
+        <button type="button" onClick={() => write({ agentCheckSkipped: true })} className={quiet}>
+          Continue anyway
+        </button>
+      </div>
+    </Page>
+  )
+}
+
 function SignInToAgent() {
   const providers = useProviderStatus()
   const refresh = useRefreshProviderStatus()
@@ -1390,10 +1439,11 @@ export function WelcomeBack({ runs }: { runs: readonly RunRecord[] }) {
 }
 
 /**
- * The sidebar's permanent way into "What's new" (Linear, Riverside): a quiet row above the
- * footer, with a dot while something shipped since the user last opened it.
+ * The sidebar's permanent way into "What's new" (Linear, Riverside): a row with a dot while
+ * something shipped since the user last opened it. `menuItem` renders it inside the sidebar's
+ * "⋯" menu (redesign, Proposal 1); the item keeps the menu open so its dialog outlives the click.
  */
-export function WhatsNewNavItem() {
+export function WhatsNewNavItem({ menuItem = false }: { menuItem?: boolean } = {}) {
   const uiState = useWorkspaceUiState()
   const health = useHealth()
   const write = useOnboardingWrite()
@@ -1403,26 +1453,44 @@ export function WhatsNewNavItem() {
   const items = recentAnnouncements(capabilities, now)
   if (!uiState.data || items.length === 0) return null
   const unseen = whatsNewHasUnseen(uiState.data.onboarding, capabilities, now)
+  const show = () => {
+    setOpen(true)
+    write({ whatsNewSeenAt: new Date().toISOString() })
+  }
+  const label = (
+    <>
+      <GiftIcon className="size-4 shrink-0" aria-hidden="true" />
+      What’s new
+      {unseen ? (
+        <span className="ml-auto flex items-center">
+          <span className="size-1.5 rounded-full bg-violet" aria-hidden="true" />
+          <span className="sr-only">Unread</span>
+        </span>
+      ) : null}
+    </>
+  )
   return (
     <>
-      <button
-        type="button"
-        data-slot="whats-new"
-        onClick={() => {
-          setOpen(true)
-          write({ whatsNewSeenAt: new Date().toISOString() })
-        }}
-        className="flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-ui text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-      >
-        <GiftIcon className="size-4 shrink-0" aria-hidden="true" />
-        What’s new
-        {unseen ? (
-          <span className="ml-auto flex items-center">
-            <span className="size-1.5 rounded-full bg-violet" aria-hidden="true" />
-            <span className="sr-only">Unread</span>
-          </span>
-        ) : null}
-      </button>
+      {menuItem ? (
+        <DropdownMenuItem
+          data-slot="whats-new"
+          onSelect={(event) => {
+            event.preventDefault()
+            show()
+          }}
+        >
+          {label}
+        </DropdownMenuItem>
+      ) : (
+        <button
+          type="button"
+          data-slot="whats-new"
+          onClick={show}
+          className="flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-ui text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          {label}
+        </button>
+      )}
       {open ? <WhatsNewDialog items={items} description="Recent changes in cezar." onOpenChange={setOpen} /> : null}
     </>
   )

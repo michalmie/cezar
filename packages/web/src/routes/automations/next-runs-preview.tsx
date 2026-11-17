@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import { nextOccurrence, occurrencesBetween, type AutomationKind, type AutomationSchedule } from '@open-mercato/cezar-api-client'
+import { nextScheduleOccurrence, scheduleOccurrencesBetween, type AutomationKind, type AutomationSchedule } from '@open-mercato/cezar-api-client'
 import { Card } from '@/components/ui/card'
 import { dayTime, relativeIn } from '@/lib/automation-format'
 
@@ -15,12 +15,14 @@ const DAY = 86_400_000
 export function NextRunsPreview({
   kind,
   schedule,
+  schedules,
   intervalSeconds,
   timeZone,
   now,
 }: {
   kind: AutomationKind
   schedule: AutomationSchedule
+  schedules?: AutomationSchedule[]
   intervalSeconds: number
   timeZone: string
   now?: number
@@ -38,11 +40,11 @@ export function NextRunsPreview({
     // would report a date past its far edge as already passed. The recurring shapes all repeat
     // within nine days.
     if (schedule.type === 'once') {
-      const next = nextOccurrence(schedule, at, timeZone)
+      const next = nextScheduleOccurrence({ schedule, schedules }, at, timeZone)
       return next === null ? [] : [next]
     }
-    return occurrencesBetween(schedule, at, at + 9 * DAY, timeZone, 5)
-  }, [kind, schedule, at, timeZone])
+    return scheduleOccurrencesBetween({ schedule, schedules }, at, at + 9 * DAY, timeZone, 5)
+  }, [kind, schedule, schedules, at, timeZone])
   return (
     <Card flush data-slot="next-runs-preview" className="pt-3 pb-2">
       <div className="px-3.5 pb-2 eyebrow text-soft-foreground">
@@ -59,7 +61,7 @@ export function NextRunsPreview({
       ) : (
         runs.map((ms) => (
           <div key={ms} data-slot="next-run" className="flex gap-2.5 px-3.5 py-[5px] text-ui">
-            <span className="w-[82px] shrink-0 font-mono text-xs font-medium whitespace-nowrap text-foreground tabular-nums">
+            <span className="w-[82px] shrink-0 text-label font-medium whitespace-nowrap text-foreground tabular-nums">
               {dayTime(ms, timeZone)}
             </span>
             <span className="text-meta whitespace-nowrap text-soft-foreground">{relativeIn(ms, at)}</span>

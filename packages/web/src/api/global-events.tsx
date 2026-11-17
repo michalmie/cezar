@@ -1,9 +1,15 @@
 import { worktreeLifecycleInvalidationSchema } from '@open-mercato/cezar-api-client'
 import { lifecycleQueryKeys } from './worktree-lifecycle'
+import { applyManagerEvent, managerKeys, MANAGER_EVENT_NAMES, refreshManagerChats } from './managers'
 import { dashboardProjectTransition, dashboardTransition } from './dashboard-truth'
 import { dashboardWorkspaceUsageSchema } from '@open-mercato/cezar-api-client'
 import { dashboardLive } from './dashboard-live'
-import { trackerChangedEventSchema } from '@open-mercato/cezar-api-client'
+import {
+  runArtifactsEventSchema,
+  trackerChangedEventSchema,
+  type ArtifactsBySubjectResponse,
+  type RunArtifactsResponse,
+} from '@open-mercato/cezar-api-client'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 
@@ -465,6 +471,8 @@ async function reconcile(queryClient: QueryClient): Promise<void> {
     workspaceQueryKeys.hostUsage,
     // Its poll stops once a check settles, and no stream carries skills news.
     workspaceQueryKeys.skillsUpdateAll,
+    // Replies and approvals produced while the stream was down; the chats catch up below.
+    managerKeys.list,
     ['run-history', activeScope] as const,
     ['run-history-context', activeScope] as const,
   ] as const
@@ -480,6 +488,8 @@ async function reconcile(queryClient: QueryClient): Promise<void> {
         queryClient.invalidateQueries({ queryKey: workspaceQueryKeys.projects }),
       ])),
       queryClient.invalidateQueries({queryKey: ['worktree-lifecycle'], refetchType: 'none'}),
+      // Only each chat's newest page: invalidating the infinite query re-reads every loaded one.
+      refreshManagerChats(queryClient),
       ...cachedProjectScopes(queryClient)
         .filter((scope) => scope !== activeScope)
         .flatMap((scope) => eventQueryKeys(scope).map((queryKey) =>
@@ -822,6 +832,32 @@ export function useGlobalEvents(usage: UsageStore, url: string = SSE_URL): void 
         lifecycleMaxTimer ??= setTimeout(refreshLifecycle, 1000)
       })
 
+      // A run's artifact listing changed (spec 2026-10-22-html-artifacts-and-impact). The frame is
+      // the WHOLE listing, so it replaces the cached answer; only a cache someone opened is patched.
+      current.addEventListener('artifacts', (event) => {
+        if (disposed || source !== current) return
+        lastFrameAt = Date.now()
+        let payload: unknown
+        try { payload = JSON.parse((event as MessageEvent<string>).data) } catch { return }
+        const parsed = runArtifactsEventSchema.safeParse(payload)
+        if (!parsed.success) return
+        const { project, runId, artifacts, truncated, versions } = parsed.data
+        if (project !== undefined && project !== activeProject(queryClient)) {
+          inactiveProjectRefresher.onEvent(project)
+          return
+        }
+        const listing: RunArtifactsResponse = { artifacts, truncated, ...(versions ? { versions } : {}) }
+        const key = queryKeys.runs.artifacts(runId)
+        if (queryClient.getQueryData(key) !== undefined) queryClient.setQueryData<RunArtifactsResponse>(key, listing)
+        // An impact control showing this run (Assessing… → Open impact) takes the same listing.
+        queryClient.setQueriesData<ArtifactsBySubjectResponse>(
+          { queryKey: queryKeys.runs.impactSubjects },
+          (answer) => (answer?.run?.id === runId ? patchSubjectListing(answer, listing) : answer),
+        )
+        // The project Assets page's rows carry run facts the frame does not, so it refetches.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.runs.projectAssets })
+      })
+
       for (const name of WORKSPACE_EVENT_NAMES) {
         current.addEventListener(name, (event) => {
           if (disposed || source !== current) return
@@ -860,6 +896,16 @@ export function useGlobalEvents(usage: UsageStore, url: string = SSE_URL): void 
             void queryClient.invalidateQueries({ queryKey: workspaceQueryKeys.dashboard, refetchType: document.visibilityState === 'hidden' ? 'none' : 'active' })
           }
           for (const listener of [...workspaceListeners]) listener(name, payload)
+        })
+      }
+
+      // Own branch, not WORKSPACE_EVENT_NAMES: a streaming reply emits these every ~100ms, and that
+      // branch re-lists the registry.
+      for (const name of MANAGER_EVENT_NAMES) {
+        current.addEventListener(name, (event) => {
+          if (disposed || source !== current) return
+          lastFrameAt = Date.now()
+          applyManagerEvent(queryClient, name, (event as MessageEvent<string>).data)
         })
       }
 
@@ -1073,3 +1119,10 @@ export function useRunUsage(runId: string | undefined): ProcessUsage | undefined
 
 const noopSubscribe = (): (() => void) => () => undefined
 const getEmptyUsage = (): Record<string, ProcessUsage> => EMPTY_USAGE
+
+/** A subject answer with its run's listing replaced (the frame is the WHOLE listing). */
+function patchSubjectListing(answer: ArtifactsBySubjectResponse, listing: RunArtifactsResponse): ArtifactsBySubjectResponse {
+  if (answer.run === null) return answer
+  const { versions: _old, ...rest } = answer
+  return { ...rest, artifacts: listing.artifacts, truncated: listing.truncated, ...(listing.versions ? { versions: listing.versions } : {}) }
+}

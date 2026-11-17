@@ -8,8 +8,9 @@ import { autosaveCommit, taskRemotes } from '../../git-worktree.ts';
 import { deliverySummary } from '../../runs/delivery-summary.ts';
 import { parseRemote, splitRemoteRef } from '../../git-remotes.ts';
 import { GITHUB_COM, isGithubHost } from '../../github-hosts.ts';
-import { baseDivergence } from '../git-changes.ts';
+import { baseDivergence, rewriteLeaseArg } from '../git-changes.ts';
 import { getRepoInfo } from '../git.ts';
+import { fetchIssueMetadata } from './github-issue-metadata.ts';
 import type {
   DraftPrInput,
   DraftPrOutcome,
@@ -619,6 +620,7 @@ export async function fetchGithub(
         };
       },
     );
+    await hydrateIssueItems(repoRoot, issues, ownerName);
     const data: GithubData = {
       available: true,
       repo: `${ownerName.owner}/${ownerName.name}`,
@@ -694,6 +696,27 @@ export const GH_SEARCH_MAX = 50;
  *  degrade. `gh {issue,pr} view` is the opposite — it tolerates the field for both kinds — so only
  *  the search path needs to discriminate. */
 const SEARCH_FIELDS = 'number,title,author,createdAt,labels,body,url';
+
+async function hydrateIssueItems(
+  repoRoot: string,
+  items: ForgeItem[],
+  handle?: { owner: string; name: string },
+): Promise<void> {
+  const issues = items.filter(item => item.kind === 'issue');
+  if (!issues.length) return;
+  const deadline = Date.now() + 5_000;
+  const repo = handle ?? await resolveRepoHandle(repoRoot, 5_000);
+  if (!repo) return;
+  const metadata = await fetchIssueMetadata((query, variables) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return Promise.reject(new Error('Issue metadata budget exhausted'));
+    return gh(repoRoot, [
+      'api', 'graphql', '-f', `query=${query}`,
+      '-f', `owner=${variables.owner}`, '-f', `name=${variables.name}`,
+    ], remaining);
+  }, repo.owner, repo.name, issues.map(item => item.number));
+  for (const issue of issues) Object.assign(issue, metadata.get(issue.number));
+}
 
 /** `gh search {prs,issues} --json` field list for `kind`. See `SEARCH_FIELDS` on why `isDraft`
  *  cannot be sent to the issues search. */
@@ -829,7 +852,9 @@ export async function searchGithubItems(
         if (actualKind !== kind) {
           throw new Error(`GitHub returned a ${actualKind ?? 'unknown'} for an ${kind} lookup`);
         }
-        return { available: true, items: [toSearchItem(kind, hit, labelColors)], labelColors };
+        const items = [toSearchItem(kind, hit, labelColors)];
+        await hydrateIssueItems(repoRoot, items);
+        return { available: true, items, labelColors };
       } catch {
         // Not a number in this repo (or not this kind) — fall through to the text search below.
       }
@@ -863,9 +888,11 @@ export async function searchGithubItems(
       trimmed,
     ]);
     const hits = z.array(ghSearchHitSchema).parse(JSON.parse(out));
+    const items = hits.map((hit) => toSearchItem(kind, hit, labelColors));
+    await hydrateIssueItems(repoRoot, items, handle);
     return {
       available: true,
-      items: hits.map((hit) => toSearchItem(kind, hit, labelColors)),
+      items,
       truncated: hits.length >= capped,
       labelColors,
     };
@@ -889,6 +916,14 @@ function mockGithub(): GithubData {
     labels: [],
     url: `https://github.com/mock/repo/${over.kind === 'pr' ? 'pull' : 'issues'}/${over.number}`,
     comments: 0,
+    ...(over.kind === 'issue' ? {
+      assignees: over.number === 142 ? ['ada', 'grace'] : [],
+      linkedPrs: over.number === 142
+        ? [{ number: 128, title: 'Fix the session refresh', url: 'https://github.com/mock/repo/pull/128', state: 'open' as const, isDraft: false }]
+        : over.number === 139
+          ? [{ number: 126, title: 'Add JSON output', url: 'https://github.com/mock/repo/pull/126', state: 'merged' as const, isDraft: false }]
+          : [],
+    } : {}),
     ...over,
   });
   return {
@@ -1250,13 +1285,14 @@ export function __clearRepoHandleCacheForTests(): void {
  *  slug or `gh` failed — the caller then skips checks entirely and commits render unglyphed. */
 export async function resolveRepoHandle(
   repoRoot: string,
+  timeout = 15_000,
 ): Promise<{ owner: string; name: string } | null> {
   const memo = repoHandleCache.get(repoRoot);
   if (memo !== undefined) return memo;
   let handle: { owner: string; name: string } | null;
   try {
     handle = parseOwnerName(
-      await gh(repoRoot, ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner']),
+      await gh(repoRoot, ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'], timeout),
     );
   } catch {
     // Transient — do NOT memoize, so the next thread retries.
@@ -1577,6 +1613,60 @@ export async function fetchPrHeadChecks(repoRoot: string, number: number, sha: s
     return { kind: 'checks', glyph: checks[sha] ?? null };
   } catch {
     return { kind: 'unavailable' };
+  }
+}
+
+const prWatchSchema = z.object({
+  state: z.string().nullish(),
+  headRefOid: z.string().min(1),
+  mergeable: z.string().nullish(),
+  reviewDecision: z.string().nullish(),
+  statusCheckRollup: z
+    .array(
+      z.object({
+        name: z.string().nullish(),
+        context: z.string().nullish(),
+        workflowName: z.string().nullish(),
+        status: z.string().nullish(),
+        conclusion: z.string().nullish(),
+        state: z.string().nullish(),
+      }),
+    )
+    .nullish(),
+  reviews: z.array(z.unknown()).nullish(),
+  comments: z.array(z.unknown()).nullish(),
+});
+
+/**
+ * What a parked monitor is waiting on, as one comparable string (#2040): the PR's state, head,
+ * conflict flag, review decision, every check's status and the review/comment counts. Timings
+ * are left out so a still-running check reads the same on every poll. `null` = cannot tell.
+ */
+export async function fetchPrWatchFingerprint(repoRoot: string, number: number): Promise<string | null> {
+  if (process.env.CEZ_DRY_RUN === '1') return null;
+  try {
+    const raw = await gh(repoRoot, [
+      'pr', 'view', String(number),
+      '--json', 'state,headRefOid,mergeable,reviewDecision,statusCheckRollup,reviews,comments',
+    ]);
+    const parsed = prWatchSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) return null;
+    const pr = parsed.data;
+    const checks = (pr.statusCheckRollup ?? [])
+      .map((c) => [c.workflowName ?? '', c.name ?? c.context ?? '', c.status ?? '', c.conclusion ?? c.state ?? ''].join('\u0000'))
+      .sort();
+    return JSON.stringify({
+      state: pr.state ?? null,
+      head: pr.headRefOid,
+      // UNKNOWN ↔ MERGEABLE flips while GitHub recomputes; only a conflict is actionable.
+      conflicting: pr.mergeable === 'CONFLICTING',
+      reviewDecision: pr.reviewDecision ?? null,
+      checks,
+      reviews: pr.reviews?.length ?? 0,
+      comments: pr.comments?.length ?? 0,
+    });
+  } catch {
+    return null;
   }
 }
 
@@ -2822,7 +2912,12 @@ export async function createDraftPr(input: DraftPrInput): Promise<DraftPrOutcome
   const { ahead } = await baseDivergence(worktree, run.baseBranch);
   if (ahead === 0) return { ok: false, error: nothingToPropose(branch, prBase) };
 
-  const push = await execTool(['push', '-u', remotes.push, input.expectedHeadSha ? `${input.expectedHeadSha}:refs/heads/${branch}` : branch], worktree, 'git', PUSH_TIMEOUT_MS);
+  let push = await execTool(['push', '-u', remotes.push, input.expectedHeadSha ? `${input.expectedHeadSha}:refs/heads/${branch}` : branch], worktree, 'git', PUSH_TIMEOUT_MS);
+  if (!input.expectedHeadSha && !push.ok && /\[rejected\]|non-fast-forward/.test(push.stderr)) {
+    // A rebased branch is rejected as non-fast-forward; lease only against a tip this branch held (#1758).
+    const lease = await rewriteLeaseArg(worktree, remotes.push, branch, [run.baseBranch, prBase]);
+    if (lease) push = await execTool(['push', lease, '-u', remotes.push, input.expectedHeadSha ? `${input.expectedHeadSha}:refs/heads/${branch}` : branch], worktree, 'git', PUSH_TIMEOUT_MS);
+  }
   if (!push.ok) {
     return { ok: false, error: `git push failed — ${tail(push.stderr) || 'unknown error'}` };
   }
@@ -2841,7 +2936,7 @@ export async function createDraftPr(input: DraftPrInput): Promise<DraftPrOutcome
     // The PR may already exist — opened by the agent, an earlier click whose response was
     // lost, or a create GitHub committed before it errored. Publishing is idempotent: adopt it.
     const existing = await existingPrUrl(worktree, repoArgs);
-    if (existing) return { ok: true, url: existing, dryRun: false };
+    if (existing) return { ok: true, url: existing, dryRun: false, updated: true };
     if (attempt >= PR_CREATE_ATTEMPTS || !TRANSIENT_PR_CREATE_RE.test(pr.stderr)) break;
     await new Promise((r) => setTimeout(r, PR_CREATE_RETRY_MS));
     pr = await execTool(createArgs, worktree, 'gh', PUSH_TIMEOUT_MS);
@@ -3194,10 +3289,16 @@ function mergeCheckState(check: z.infer<typeof mergeCheckSchema>): ForgePrCheck[
 /** The single row an `aggregate` check tier collapses to — see `ForgePrMergeState['checksTier']`. */
 export const AGGREGATE_CHECK_NAME = 'All checks';
 
+/**
+ * The base branch's merge rules, from classic branch protection AND repository rulesets.
+ * `reviewsRequired` is `false` only when both sources were read and neither asks for a review.
+ */
+export type MergeRequirements = { readable: boolean; requiredChecks: string[]; strict?: boolean; reviewsRequired?: boolean };
+
 export function normalizeMergeState(
   raw: unknown,
   policyRaw: unknown,
-  requirements: { readable: boolean; requiredChecks: string[]; strict: boolean } = {
+  requirements: MergeRequirements = {
     readable: false,
     requiredChecks: [],
     strict: false,
@@ -3214,14 +3315,17 @@ export function normalizeMergeState(
       : pr.mergeable?.toUpperCase() === 'CONFLICTING'
         ? 'conflicting'
         : 'unknown';
+  const decision = (pr.reviewDecision ?? '').toUpperCase();
   const reviewDecision: ForgePrMergeState['reviewDecision'] =
-    pr.reviewDecision?.toUpperCase() === 'APPROVED'
+    decision === 'APPROVED'
       ? 'approved'
-      : pr.reviewDecision?.toUpperCase() === 'CHANGES_REQUESTED'
+      : decision === 'CHANGES_REQUESTED'
         ? 'changes-requested'
-        : pr.reviewDecision?.toUpperCase() === 'REVIEW_REQUIRED'
+        : decision === 'REVIEW_REQUIRED'
           ? 'review-required'
-          : (pr.reviewDecision === null || pr.reviewDecision === '') && requirements.readable
+          : // GitHub leaves the decision empty when no review is required — trust that only once the
+            // rules were read and agree, so an unreadable ruleset never turns into "not required".
+            decision === '' && requirements.readable && requirements.reviewsRequired === false
             ? 'not-required'
             : 'unknown';
   const checks: ForgePrCheck[] = (pr.statusCheckRollup ?? []).map((check) => ({
@@ -3379,6 +3483,92 @@ async function fetchMergeChecks(
   }
 }
 
+/** GitHub's 404s for a rule that is simply not configured — anything else (403, 401, a bare
+ *  "Not Found", a network error) means the rule could not be read. */
+const PROTECTION_ABSENT = /Branch not protected|Required status checks not enabled|Required pull request reviews not enabled/i;
+
+function protectionAbsent(err: unknown): boolean {
+  const text = [err instanceof Error ? err.message : String(err), ghStderr(err) ?? '', (err as { stdout?: unknown } | null)?.stdout]
+    .filter((part): part is string => typeof part === 'string')
+    .join('\n');
+  return /HTTP 404/.test(text) && PROTECTION_ABSENT.test(text);
+}
+
+const rulesetRulesSchema = z.array(
+  z.object({ type: z.string(), parameters: z.record(z.string(), z.unknown()).nullish() }).passthrough(),
+);
+
+/**
+ * The base branch's required checks and reviews, merged from classic branch protection and
+ * repository rulesets — classic protection alone misses every ruleset-based requirement. Any read
+ * that fails for a reason other than "not configured" leaves the whole answer unreadable.
+ */
+async function fetchMergeRequirements(
+  repoRoot: string,
+  repoRef: GithubRepoRef,
+  base: string,
+): Promise<MergeRequirements> {
+  const repo = `repos/${repoRef.owner}/${repoRef.repo}`;
+  const branch = encodeURIComponent(base);
+  const classic = <T>(path: string, parse: (output: string) => T, absent: T): Promise<T | null> =>
+    gh(repoRoot, ['api', `${repo}/branches/${branch}/protection/${path}`])
+      .then(parse)
+      .catch(async (err: unknown) => {
+        if (protectionAbsent(err)) return absent;
+        // A generic 404 can hide inaccessible rules; only an explicit unprotected branch
+        // proves classic protection absent. Repository rulesets are still read separately.
+        try {
+          const output = await gh(repoRoot, ['api', `${repo}/branches/${branch}`]);
+          return z.object({ protected: z.boolean() }).parse(JSON.parse(output)).protected ? null : absent;
+        } catch { return null; }
+      });
+  const [classicChecks, classicReviews, rules] = await Promise.all([
+    classic(
+      'required_status_checks',
+      (output) => {
+        const body = branchProtectionChecksSchema.parse(JSON.parse(output));
+        return { checks: [...(body.contexts ?? []), ...(body.checks ?? []).map((check) => check.context)], strict: body.strict ?? false };
+      },
+      { checks: [] as string[], strict: false },
+    ),
+    classic(
+      'required_pull_request_reviews',
+      (output) => {
+        const body = z
+          .object({ required_approving_review_count: z.number().nullish(), require_code_owner_reviews: z.boolean().nullish() })
+          .parse(JSON.parse(output));
+        return (body.required_approving_review_count ?? 0) > 0 || body.require_code_owner_reviews === true;
+      },
+      false,
+    ),
+    gh(repoRoot, ['api', `${repo}/rules/branches/${branch}?per_page=100`])
+      .then((output) => rulesetRulesSchema.parse(JSON.parse(output)))
+      .catch(() => null),
+  ]);
+  if (classicChecks === null || classicReviews === null || rules === null) {
+    return { readable: false, requiredChecks: [] };
+  }
+  const requiredChecks = new Set(classicChecks.checks);
+  let strict = classicChecks.strict;
+  let reviewsRequired = classicReviews;
+  for (const rule of rules) {
+    if (rule.type === 'required_status_checks') {
+      const parsed = z
+        .object({ required_status_checks: z.array(z.object({ context: z.string() })), strict_required_status_checks_policy: z.boolean().optional() })
+        .safeParse(rule.parameters);
+      // A rule we cannot read is a requirement we cannot honour — never drop it silently.
+      if (!parsed.success) return { readable: false, requiredChecks: [] };
+      for (const check of parsed.data.required_status_checks) requiredChecks.add(check.context);
+      strict ||= parsed.data.strict_required_status_checks_policy === true;
+    } else if (rule.type === 'pull_request') {
+      const params = rule.parameters ?? {};
+      const count = typeof params.required_approving_review_count === 'number' ? params.required_approving_review_count : 1;
+      if (count > 0 || params.require_code_owner_review === true) reviewsRequired = true;
+    }
+  }
+  return { readable: true, requiredChecks: [...requiredChecks].sort(), strict, reviewsRequired };
+}
+
 /** Test hook — the merge-state cache would otherwise leak state across cases in one process. */
 export function __clearMergeStateCacheForTests(): void {
   mergeStateCache.clear();
@@ -3437,28 +3627,9 @@ export async function fetchPrMergeState(
       prOut = JSON.stringify(response.data.repository.pullRequest);
     }
     const parsedPr = mergePrSchema.parse(JSON.parse(prOut));
-    const [policyOut, requiredChecks, checks] = await Promise.all([
+    const [policyOut, requirements, checks] = await Promise.all([
       gh(repoRoot, ['api', `repos/${repoRef.owner}/${repoRef.repo}`]),
-      gh(repoRoot, [
-        'api',
-        `repos/${repoRef.owner}/${repoRef.repo}/branches/${encodeURIComponent(parsedPr.baseRefName)}/protection/required_status_checks`,
-      ])
-        .then((output) => {
-          const protection = branchProtectionChecksSchema.parse(JSON.parse(output));
-          const required = [...(protection.contexts ?? []), ...(protection.checks ?? []).map((check) => check.context)];
-          return { readable: true, requiredChecks: [...new Set(required)], strict: protection.strict ?? false };
-        })
-        .catch(async () => {
-          // Missing protection is normal on an unprotected branch; a 404 alone can also hide
-          // unreadable rules. Confirm the branch explicitly before treating it as rule-free.
-          try {
-            const output = await gh(repoRoot, ['api', `repos/${repoRef.owner}/${repoRef.repo}/branches/${encodeURIComponent(parsedPr.baseRefName)}`]);
-            const branch = z.object({ protected: z.boolean() }).parse(JSON.parse(output));
-            return { readable: !branch.protected, requiredChecks: [] as string[], strict: false };
-          } catch {
-            return { readable: false, requiredChecks: [] as string[], strict: false };
-          }
-        }),
+      fetchMergeRequirements(repoRoot, repoRef, parsedPr.baseRefName),
       fetchMergeChecks(repoRoot, repoRef, number),
     ]);
     const value: ForgePrMergeStateResult = {
@@ -3466,7 +3637,7 @@ export async function fetchPrMergeState(
       mergeState: normalizeMergeState(
         { ...parsedPr, statusCheckRollup: checks.rollup },
         JSON.parse(policyOut),
-        requiredChecks,
+        requirements,
         { tier: checks.tier, ...(checks.reason ? { reason: checks.reason } : {}) },
       ),
     };
@@ -3480,7 +3651,46 @@ export async function fetchPrMergeState(
   }
 }
 
+const prHeadCache = new Map<string, { at: number; sha: string | null }>();
+const PR_HEAD_CACHE_MS = 30_000;
+
+/**
+ * A pull request's current head sha, for "is this impact report stale?" (spec
+ * 2026-10-22-html-artifacts-and-impact Q10). The merge box's fresh answer when there is one, else
+ * one `gh pr view` memoized for 30 s. `null` when GitHub cannot say — never throws.
+ */
+export async function fetchPrHeadSha(repoRoot: string, number: number): Promise<string | null> {
+  const merge = mergeStateCache.get(`${repoRoot}:${number}`);
+  if (merge && Date.now() - merge.at < MERGE_CACHE_MS && merge.value.available) return merge.value.mergeState.headSha;
+  const key = `${repoRoot}\0${number}`;
+  const hit = prHeadCache.get(key);
+  if (hit && Date.now() - hit.at < PR_HEAD_CACHE_MS) return hit.sha;
+  let sha: string | null;
+  try {
+    sha = ghPrHeadSchema.parse(JSON.parse(await gh(repoRoot, ['pr', 'view', String(number), '--json', 'headRefOid']))).headRefOid.toLowerCase();
+  } catch {
+    sha = null;
+  }
+  prHeadCache.set(key, { at: Date.now(), sha });
+  while (prHeadCache.size > 200) prHeadCache.delete(prHeadCache.keys().next().value!);
+  return sha;
+}
+
+/**
+ * The head sha `fetchPrHeadSha` would answer from cache alone — `undefined` when only a `gh` call
+ * could tell. For list routes (the project Assets page), which must never shell out per row.
+ */
+export function peekPrHeadSha(repoRoot: string, number: number): string | null | undefined {
+  const merge = mergeStateCache.get(`${repoRoot}:${number}`);
+  if (merge && Date.now() - merge.at < MERGE_CACHE_MS && merge.value.available) return merge.value.mergeState.headSha;
+  const hit = prHeadCache.get(`${repoRoot}\0${number}`);
+  return hit && Date.now() - hit.at < PR_HEAD_CACHE_MS ? hit.sha : undefined;
+}
+
 export function evictGithubProjectCaches(repoRoot: string): void {
+  prHeadCache.forEach((_value, key) => {
+    if (key.startsWith(`${repoRoot}\0`)) prHeadCache.delete(key);
+  });
   listCache.delete(repoRoot);
   mergeStateCache.forEach((_value, key) => {
     if (key.startsWith(`${repoRoot}:`)) mergeStateCache.delete(key);

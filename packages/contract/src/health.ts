@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /** The agent backends a run can be dispatched to. */
-export const runnerSchema = z.enum(['claude', 'codex', 'opencode', 'cursor', 'pi', 'junie', 'copilot', 'muse']);
+export const runnerSchema = z.enum(['claude', 'codex', 'opencode', 'cursor', 'pi', 'junie', 'copilot', 'omp', 'antigravity', 'gemini', 'kimi', 'muse']);
 export type Runner = z.infer<typeof runnerSchema>;
 
 /** Git facts about the project root, or `null` when it is not a repository. */
@@ -14,7 +14,7 @@ export type RepoInfo = z.infer<typeof repoInfoSchema>;
 
 /** One probed CLI behind the Tools menu. */
 export const backendCheckSchema = z.object({
-  name: z.enum(['claude', 'codex', 'opencode', 'cursor', 'pi', 'junie', 'copilot', 'muse', 'gh', 'git']),
+  name: z.enum([...runnerSchema.options, 'gh', 'git']),
   available: z.boolean(),
   version: z.string().optional(),
   hint: z.string().optional(),
@@ -58,6 +58,10 @@ export const capabilitiesSchema = z.object({
    * REQUIRED for the same reason as `tokenMetrics` below: this server always sends it.
    */
   automations: z.boolean(),
+  /** Managers (spec 2026-10-31-managers): default-on, `CEZ_MANAGERS=0` off. */
+  managers: z.boolean().optional(),
+  /** The server can raise an OS notification here, so a manager's browser one would be a double. */
+  managerSystemNotifications: z.boolean().optional(),
   /** Project lifecycle notifications; independent of graph notify steps. */
   webhooks: z.boolean(),
   /** Present on unsupported server platforms, regardless of the opt-in flag. */
@@ -110,6 +114,8 @@ export type DiskInfo = z.infer<typeof diskInfoSchema>;
  */
 export const healthResponseSchema = z.object({
   version: z.string(),
+  /** Random identity of this exact server process; stable until the process restarts. */
+  runtimeId: z.string().uuid(),
   latestVersion: z.string().optional(),
   repoRoot: z.string(),
   repo: repoInfoSchema.nullable(),

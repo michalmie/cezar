@@ -8,6 +8,7 @@ import { queryKeys, workspaceQueryKeys } from '@/api/queries'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { toast } from '@/components/ui/toaster'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ownedTaskPr } from '@/lib/tasks-table'
 import { cn } from '@/lib/utils'
 import { useAskAnswer } from './ask-answer'
@@ -147,7 +148,7 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange, onAdoptCom
       {!number && !publishedPr ? <p className="text-sm">This task has no pull request yet. Create a PR for main, then review its merge requirements here.</p> : null}
       {!number && !publishedPr && !publishOpen ? <div><Button size="sm" variant="outline" onClick={() => setPublishOpen(true)}>Publish to another project…</Button></div> : null}
       {!number && !publishedPr && publishOpen ? <div className="grid gap-2 rounded-md border border-border bg-card p-3 text-xs">
-        <label className="grid gap-1">Project<select aria-label="Target project" className="rounded border border-border bg-background p-2 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50" value={targetId} onChange={e => setPublishProjectId(e.target.value)}>{targets.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
+        <div className="grid gap-1"><span>Project</span><Select value={targetId} onValueChange={setPublishProjectId}><SelectTrigger aria-label="Target project" className="w-full"><SelectValue placeholder="Choose a project" /></SelectTrigger><SelectContent>{targets.map(entry => <SelectItem key={entry.id} value={entry.id}>{entry.name}</SelectItem>)}</SelectContent></Select></div>
         <label className="grid gap-1">Branch<input aria-label="Branch" className="rounded border border-border bg-background p-2 font-mono outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50" value={publishBranchName} onChange={e => setPublishBranchName(e.target.value)} placeholder="cez/task-branch" /></label>
         {projects.isPending ? <p role="status">Loading projects…</p> : null}
         {projects.data && targets.length === 0 ? <p>No other GitHub project is registered.</p> : null}
@@ -196,7 +197,7 @@ export function FeatureMergeDialog({ run, commit, open, onOpenChange, onAdoptCom
         </ul> : null}
         {state.blockers.filter(blocker => blocker.code !== 'behind' || !behindBox).map(blocker => <p key={blocker.code}>{blocker.message}</p>)}
         {openPr && state.canOverride && !mismatched ? <label className="flex cursor-pointer items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs"><input type="checkbox" checked={overrideRules} onChange={e => setOverrideRules(e.target.checked)} className="mt-0.5 size-4 accent-primary" /><span><span className="block font-medium">Merge without waiting for requirements</span><span className="mt-0.5 block text-soft-foreground">GitHub will allow this only if your permissions can bypass the repository rules.</span></span></label> : null}
-        {openPr && !mismatched && !conflicting && state.methods.length ? <label className="grid gap-1">Merge method<select aria-label="Merge method" className="rounded border border-border bg-background p-2 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50" value={selected ?? ''} onChange={e => setMethod(e.target.value as GithubMergeMethod)}>{state.methods.map(value => <option key={value} value={value}>{methodLabel(value)}</option>)}</select></label> : null}
+        {openPr && !mismatched && !conflicting && state.methods.length ? <div className="grid gap-1"><span>Merge method</span><Select value={selected ?? ''} onValueChange={value => setMethod(state.methods.find(method => method === value) ?? null)}><SelectTrigger aria-label="Merge method" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{state.methods.map(value => <SelectItem key={value} value={value}>{methodLabel(value)}</SelectItem>)}</SelectContent></Select></div> : null}
       </div> : null}
       {publishedPr ? <div role="status" className="flex items-start gap-4 rounded-lg border border-success/50 bg-success/10 p-5">
         <CircleCheckIcon aria-hidden="true" className="size-10 shrink-0 text-success" />

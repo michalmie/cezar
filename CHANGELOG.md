@@ -1,3 +1,189 @@
+# 0.20.0 (2026-11-15)
+
+## ✨ Features
+- ✨ The cockpit is installable: add it to a phone or desktop home screen and it opens standalone, including behind a Basic auth gate. Live data stays live, there is no service worker. (#1762, #2038) *(@patzick)*
+- ✨ Managers: create global agents in the new Manager mode, connect repositories (read-only or write per repository), and chat with them. A manager refreshes on a cadence (a check with nothing new makes no model call), runs saved jobs, starts and steers tasks, reports every task waiting on you, asks decisions on question cards, and proposes merges, automation enables and jobs that wait for your approval. Each manager has its own animated mascot. `CEZ_MANAGERS=0` turns them off. (#2038) *(@patzick)*
+- ✨ A manager's tasks on a read-only repository are enforced read-only by each agent's own controls, with no `gh` login, git credentials or private MCP servers; Kimi, omp and Antigravity refuse them. Ask mode is unchanged. (#2038) *(@patzick)*
+- ✨ Manager on a phone: a fresh load of the cockpit's address lands on Manager, a single manager opens straight in its chat, the chat keeps to one header row with a composer above the keyboard, and an installed cockpit gets a Manager, Tasks and More bar. Tablets and desktops keep restoring your last page. (#2038) *(@patzick)*
+- ✨ Manager approvals: Approve opens a summary of what will happen (a sheet on phones, a dialog on desktop), each card shows why a decision was refused, and an "N approvals waiting" pill jumps to the oldest card. Settings → Manager turns the summary off per type. (#2038) *(@patzick)*
+- ✨ On a phone, Enter in a chat composer starts a new line and only Send sends; a hardware keyboard there sends with ⌘/Ctrl+Enter. Desktop keeps Enter to send. (#2038) *(@patzick)*
+- ✨ With usage telemetry on, Manager mode reports how it is used: entering it, creating, changing and deleting managers, opening chats, sending messages, turns, tasks started, proposals and decisions, answered questions and notification clicks. Labels are fixed values only; never names, messages, projects or paths. (#2038) *(@patzick)*
+- ✨ A manager files long text without loss: paste a transcript and say "file this", and the task gets your message word for word, attachments included, copied on the server instead of retyped into a command. `cez-manager task create` and `task say` gain `--attach-last-user-message`, `--from-message`, `--file`, `--stdin` and `--allow-placeholder`; a placeholder such as `[transcript here]` is refused, and Claude managers may write files under their own `files/` folder. (#2071) *(@patzick)*
+- ✨ An automation a manager creates posts each run's result to that manager's chat: the task's last message word for word with a task card, within seconds and without a model turn. A failed run is posted as an important message with the reason, so it raises a notification. Each run is posted once, also across restarts, and the manager's refresh does not report it again. The automation's page shows which manager it reports to, where you can choose every result, failures only or nothing, or unlink it. `cez automation add` gains `--report-to-manager [--manager <id>] [--report-mode post-result|failure-only|none]`, `cez automation report <id>` changes the link, and `cez automation list --json` lists it. Automations not linked to a manager behave as before. (#2110) *(@patzick)*
+- ✨ A manager hears about its tasks the moment they change. When a task it started finishes, fails, is cancelled or waits on you, its chat shows a task update within seconds, without a model turn: the task card, its state and the first lines of its last message. Failures and waits are important and raise a notification. The manager then takes one turn to act on the result; updates close together share it, it waits while the manager answers you, and **Follow up on its tasks** in the gear menu turns those turns off. A dispatched tree reports once, through its root, plus any subtask that waits on you. `cez-manager task follow|unfollow <run>` subscribes to a task you started. Updates are posted once, also across restarts, and changes made while Cezar was closed report when it starts. (#2160) *(@patzick)*
+- ✨ Loading screens show skeletons and spinners shaped like the page instead of plain "Loading…" text, held back 150 ms so fast loads never flash. (#2038) *(@patzick)*
+- ✨ Managers can use your claude.ai connectors (Gmail, Calendar, Drive, …) and the MCP servers in your Claude config: set each connector to Off, Read or Read+write, override single tools, and approve write calls on a card. (#2124) *(@patzick)*
+- ✨ The cockpit paints the last-known first screen at once on a slow connection, marked as cached, and refreshes it in place. Pending approvals are never cached. (#2116) *(@patzick)*
+- ✨ A monitoring task that declared a PR checks it with one `gh pr view` per wake-up and skips the model turn while the PR is unchanged. `CEZ_MONITORING_PR_WATCH=0` turns it off (fixes #2040). (#2072) *(@pat-lewczuk)*
+- ✨ Repo-local agent commands (`.claude/commands`, `.codex/prompts`, `.cursor/commands`, `.opencode/command`, `.github/prompts`) appear in the `/` list, the Skills page and ⌘K, with `$ARGUMENTS` filled in (supersedes #2013). (#2052) *(@adam-the-hero, via @pat-lewczuk)*
+- ✨ Copy a user or assistant message's Markdown from the transcript (fixes #1194). (#1372) *(@pat-lewczuk)*
+- ✨ Related tasks: a GitHub issue or PR detail lists every task of this project that referenced it, archived ones included (fixes #1048). (#1862) *(@pat-lewczuk)*
+- ✨ Pick the dictation language beside the Dictation button; the choice is kept per browser (fixes #1807). (#1861) *(@pat-lewczuk)*
+- ✨ Model pickers with more than 15 options get a search box that matches names and ids, and Enter picks the top match. (#1992) *(@thejdubb02)*
+- ✨ Clicking a run notification focuses the window and opens that run (fixes #1761). (#1859) *(@pat-lewczuk)*
+- ✨ A Details toggle on the Skills page shows full skill descriptions (fixes #895). (#1852) *(@pat-lewczuk)*
+- ✨ `cez task create --account <profile>` picks a dispatched child's account, and a child on the same runner inherits its parent's account (fixes #1744). (#1858) *(@pat-lewczuk)*
+
+## 🔒 Security
+- 🔒 Static files and install icons are read through one checked file descriptor, closing a CodeQL file-system race; the install manifest gains a padded maskable icon. (#2044) *(@pat-lewczuk)*
+- 🔒 The launch key is created and read through pinned file descriptors, so a replaced state-directory entry cannot redirect it. (#2004)
+- 🔒 `cezar init` creates its example files exclusively and never follows a dangling symlink. (#2009)
+
+## 🐛 Fixes
+- 🐛 When a task a manager follows waits on you, the manager's follow-up asks its questions and its approval on a question card, and passes your answers back to the task, instead of listing them as text. (#2162) *(@patzick)*
+- 🐛 The first tap on Send sends on phones, instead of only hiding the keyboard. (#2038) *(@patzick)*
+- 🐛 Load earlier in a Manager chat keeps your exact place, and returning to a long chat is instant: it reopens on the newest messages. (#2038) *(@patzick)*
+- 🐛 Removing an attachment while typing keeps the cursor in the message box, and the composer's buttons are 44 px tall on phones. (#2038) *(@patzick)*
+- 🐛 A message sent while the previous one is still being delivered is queued and sent next, instead of being silently ignored. (#2038) *(@patzick)*
+- 🐛 Safari's IME-commit Enter no longer sends a half-typed message from any composer or submit shortcut. (#2038) *(@patzick)*
+- 🐛 A task's title settles after its first turn instead of following the conversation, and the first `CEZ:TITLE` sticks. A manual rename still wins. (#1252) *(@matgren)*
+- 🐛 A manager turn that hits a usage limit waits for the reset and resumes, with a Don't resume link, instead of failing with an exit code. (#2073) *(@patzick)*
+- 🐛 Retention never reclaims a pinned task's worktree (#2074), or a worktree a running cezar uses (#2021). *(@patzick)*
+- 🐛 Finished worktrees are reclaimed on every transition to done, failed or cancelled, and a lowered limit applies on save (fixes #2003). (#2059) *(@pat-lewczuk)*
+- 🐛 Restart recovery resumes an interrupted agent node in the workflow graph and walks on to the later steps, instead of failing it (fixes #2001). (#2123) *(@pat-lewczuk)*
+- 🐛 A step keeps its own model across Continue, auto-resume and restart (fixes #1488). (#1797) *(@pat-lewczuk)*
+- 🐛 Task naming and commit subjects run on a cheap model on every runner, not only Claude; `namerModels` in config overrides it per runner (fixes #2012). (#2045) *(@pat-lewczuk)*
+- 🐛 Command-only workflows are never held by a usage-limit hold, and a scheduled automation skips an occurrence while its previous run is still queued (fixes #2094). (#2117) *(@pat-lewczuk)*
+- 🐛 Automations of a project registered from another process (`cez projects add`) arm without a restart (fixes #2041). (#2061) *(@pat-lewczuk)*
+- 🐛 Re-publishing a task updates its existing PR, and a rebased branch is pushed with a pinned `--force-with-lease` (fixes #1758). (#1813) *(@pat-lewczuk)*
+- 🐛 OpenCode: permission prompts show as an ask card with Allow once / Always allow / Reject instead of being refused (fixes #2042) (#2070); a superseding prompt no longer fakes a turn end, and usage sums per message (fixes #2097, #2101) (#2119); images a run reads show in the chat (fixes #1896) (#2066); no `opencode serve` is left behind on cancel, Continue or exit (fixes #1498) (#1798). *(@pat-lewczuk)*
+- 🐛 OpenCode model listings longer than 500 entries load instead of reporting no models (fixes #1875). (#1966) *(@thejdubb02)*
+- 🐛 Gemini receives the task's additional directories as `--include-directories` (fixes #1919). (#2134) *(@pat-lewczuk)*
+- 🐛 An npm-installed Codex is found on Windows without `CEZ_CODEX_BIN` (fixes #1948). (#2132) *(@pat-lewczuk)*
+- 🐛 Open Mercato skill updates run on Windows, and an up-to-date scope says so (fixes #1958, #1905). (#2129) *(@pat-lewczuk)*
+- 🐛 `CEZ_DRY_RUN=1` uses bundled mocks for Codex and OpenCode instead of the real CLIs (fixes #1898). (#2060) *(@pat-lewczuk)*
+- 🐛 Connect creates a named agent account's missing folder, so Codex logins no longer abort (fixes #1918). (#2069) *(@pat-lewczuk)*
+- 🐛 A step closed by the idle timer reads as "closed · idle" in the step rail and the Graph tab instead of a red failure (fixes #2022, #2024, #2025) (supersedes #2026, #2028). (#2054) *(@kmrosiek)*
+- 🐛 The Graph tab no longer crashes on a workflow with several outcome ports wired to the same node (fixes #1937). (#1952) *(@HusnainMaroof)*
+- 🐛 Asset cards sit under the turn that produced them instead of trailing the transcript (fixes #2037). (#2133) *(@pat-lewczuk)*
+- 🐛 A transcript no longer shows a gap after its history is refetched (fixes #2018). (#2062) *(@pat-lewczuk)*
+- 🐛 Skills → Refresh is no longer undone by a stale cached list (fixes #1904). (#2065) *(@pat-lewczuk)*
+- 🐛 The Tasks automation facet labels deleted automations instead of showing their ids (fixes #2100). (#2122) *(@pat-lewczuk)*
+- 🐛 Onboarding pages follow the chosen accent color (fixes #1977). (#2136) *(@pat-lewczuk)*
+- 🐛 Agents are told that file links are not clickable in the cockpit, and where to put files you need to reach (part of #1923). (#2131) *(@pat-lewczuk)*
+- 🐛 Relative images in HTML artifacts load under `npm run dev` (fixes #1920). (#2135) *(@pat-lewczuk)*
+- 🐛 The Backport workflow no longer runs, and fails, on forks. (#2108) *(@kmrosiek)*
+
+## 👥 Contributors
+
+- @adam-the-hero
+- @HusnainMaroof
+- @kmrosiek
+- @matgren
+- @pat-lewczuk
+- @patzick
+- @thejdubb02
+
+# 0.19.0 (2026-11-08)
+
+## Highlights
+Four new agent runners (Gemini CLI, Kimi Code, Antigravity and omp) and HTML artifacts, with Assess Impact for PRs and specs as the first feature built on them. Onboarding installs an agent and signs you in without leaving cezar, a task that runs out of usage can fall back to another provider or account, and the task header shows live Claude usage. Jira and Linear tokens are now encrypted and tracker automation agents no longer receive them, so read **Breaking** before upgrading. The sidebar groups projects into folders and folds into an icon rail.
+
+## ⚠️ Breaking
+- ⚠️ Jira and Linear tokens move from plaintext files to encrypted vault records, migrated on first read. Older binaries cannot read migrated records, so stop older processes before upgrading and use a separate home to downgrade. (#1720) *(@matwiatrzyk)*
+- ⚠️ Tracker automation agents no longer receive Jira/Linear tokens. They get server-fetched issue context and `cez tracker read|comment|transition`, bound to their task's project and issue. Comments and status changes need an explicit grant in the automation. (#1721) *(@matwiatrzyk)*
+
+## ✨ Features
+- ✨ HTML artifacts: agents publish pages that show live inside the task. Assess Impact, the first feature built on them, covers PRs and specs. (#1624) *(@pat-lewczuk)*
+- ✨ New agent runners: Gemini CLI over ACP (fixes #581) (supersedes #1049) (#1917) *(@aleksanderw1992, via @pat-lewczuk)*, Kimi Code over ACP (supersedes #1686) (#1916) *(@wppoland, via @pat-lewczuk)*, Antigravity CLI (`agy`) (#1506) *(@Exsilium122)* and omp, pi's successor (#1139) *(@aleksanderw1992)*.
+- ✨ Onboarding installs an agent and signs you in inside cezar, in a terminal on the page. (#1890) *(@pat-lewczuk)*
+- ✨ `cezar serve` joins a verified running cockpit and opens the current project there, instead of starting a second server (fixes #1732). (#1739) *(@pkarw)*
+- ✨ Opt-in automatic fallback when a task's agent runs out of usage: an ordered provider/account list in Settings → Agents continues the same task. (#1603) *(@matwiatrzyk)*
+- ✨ Live Claude usage gauges in the task header: 5-hour and 7-day windows plus context fill, toggled in Settings → Appearance. (#1625) *(@wppoland)*
+- ✨ Pick the reasoning effort per task from an Effort pill next to Model: Codex (supersedes #815) (#1888) *(@vloneskorpion, via @pat-lewczuk)* and Claude, with the levels discovered per model (part of #808) (#1968) *(@pat-lewczuk)*.
+- ✨ Run First: a queued task moves to the front of its project's queue and takes the next free slot. (#1065) *(@wojciechszyjka)*
+- ✨ Idle-closed tasks show as "closed · idle" instead of a red "failed", with no failure notification. (#1935) *(@kmrosiek)*
+- ✨ Export and import automations per project, and the cezar configuration as a whole, from Global Settings → Transfer. Files carry no secret values or credentials, imported automations arrive paused, and a failed import restores every file it touched (fixes #1942). (#1953) *(@pat-lewczuk)*
+- ✨ One scheduled automation can hold up to 16 times (fixes #1818). (#1864) *(@haxiorz)*
+- ✨ Automation details list the five most recent launched tasks (fixes #1623). (#1834) *(@haxiorz)*
+- ✨ The automation list keeps a manual order or sorts by Name or Next run, saved per project (fixes #1819). (#1836) *(@haxiorz)*
+- ✨ Archive, restore and mark read/unread from the Tasks list, for one task or a selection (fixes #1599). (#1843) *(@haxiorz)*
+- ✨ Remove a finished task's worktree from its menu. The branch, task and transcript stay (fixes #1600). (#1857) *(@haxiorz)*
+- ✨ GitHub issue rows show assignees and linked PRs with their status (fixes #1620). (#1845) *(@haxiorz)*
+- ✨ At the browse root, the folder picker explains why Up is unavailable and links to the setting (fixes #1688). (#1832) *(@haxiorz)*
+- ✨ Group sidebar projects into folders. (#1685) *(@wppoland)*
+- ✨ Fold the desktop sidebar into a rail with the Hide sidebar button or Mod+B. (#1626) *(@wppoland)*
+- ✨ The folded sidebar is a full icon rail (new task plus every project area, with badge dots), and the main column shows the selected project in a header. Mod+B also leaves Focus on the task assets view. (#1967, #2010) *(@pat-lewczuk)*
+- ✨ Keyboard task switching: ⌥↑/⌥↓ in the cockpit (with ⇧ for tasks that need you), and ⌃⌥-arrows from any app in the desktop shell. (#1591) *(@matgren)*
+- ✨ Cmd/Ctrl+Alt+N opens New task from any app in the desktop shell. (#1250) *(@matgren)*
+- ✨ `cez handoff log|resume` lets agents update the handoff file without writing their own scripts. (#1251) *(@matgren)*
+- ✨ Copy a diff file's path from its header. (#1915) *(@pat-lewczuk)*
+- ✨ Every agent command card has a copy button, short commands such as `git status` included (fixes #1931). (#1932) *(@kmrosiek)*
+- ✨ The one-click e2e setup uses e2e 0.21's non-interactive host flags. (#1868) *(@pat-lewczuk)*
+- ✨ The sidebar ⭐ count has no timer of its own. It refreshes with other requests, at most every 15 minutes. (#1944) *(@pat-lewczuk)*
+
+## 🔒 Security
+- 🔒 The desktop shell opens external links without `cmd /C start` on Windows, and opens only `http`, `https` and `mailto` links on every platform. *(@pat-lewczuk)*
+- 🔒 Webhook outbox reads and torn-tail repair act on the file that was checked, through one no-follow descriptor (fixes #1981). (#1982)
+- 🔒 API base URLs and attachment names are normalized in linear time, closing two CodeQL polynomial-regex findings. (#1978)
+- 🔒 Images in private GitHub issues and PRs load through the authenticated project API, which allows only GitHub attachment hosts, checks every redirect and sends the `gh` token only to github.com (fixes #1902). (#1979)
+- 🔒 A task's handoff file is created exclusively, so a concurrent writer's journal is never overwritten and an existing or dangling symlink is refused. (#1999)
+- 🔒 The repo's GitHub tracker descriptor is re-synced with upstream. (#1188) *(@lbajsarowicz)*
+
+## 🐛 Fixes
+- 🐛 OpenCode 2.x works: the runner probes the server API and picks the matching protocol (fixes #1513) (supersedes #1275). (#1826) *(@righttime, via @pat-lewczuk)*
+- 🐛 Continue starts a fresh session with the task's context when Claude, Codex or OpenCode reports that the session is gone (fixes #1193). (#1281) *(@pat-lewczuk)*
+- 🐛 An autonomous run that keeps ending empty turns parks after five instead of spinning, and supervision turns no longer use up the nudge budget. (#1198) *(@piotrchabros)*
+- 🐛 Codex, Copilot, Cursor, OpenCode and Pi sessions are marked closed when the agent exits by itself, so messages are no longer reported as delivered to a dead process. (#1396) *(@lbajsarowicz)*
+- 🐛 A task's `TMPDIR`/`TMP`/`TEMP` point outside the checkout (fixes #999) (supersedes #1129). (#1825) *(@pat-lewczuk)*
+- 🐛 A run event stream without a cursor reads only the tail of the file and sends a gap frame, instead of replaying the whole transcript (fixes #882) (supersedes #888). (#1821) *(@blabbler78, via @pat-lewczuk)*
+- 🐛 Pasted screenshots with an empty MIME type are accepted, and later workflow steps still see the attachment paths (supersedes #915). (#1392) *(@wojciechszyjka, via @lbajsarowicz)*
+- 🐛 `cez task create` refuses an explicit `--model` that the child's runner cannot run (fixes #1578). (#1815) *(@pat-lewczuk)*
+- 🐛 A closed run's Continue and question answers no longer stay disabled while provider status loads (fixes #719). (#1850) *(@pat-lewczuk)*
+- 🐛 A task linked to several PRs shows one chip plus `+N` in the sidebar and palette, so its title stays visible. (#1748) *(@martaradziszewska)*
+- 🐛 Nested task titles get their indent back in the Task column (fixes #979). (#1849) *(@pat-lewczuk)*
+- 🐛 Up, Page Up and Home release the thread's stick-to-bottom after you click its text (fixes #1800). (#1810) *(@pat-lewczuk)*
+- 🐛 When Codex hits its usage limit, the task shows the provider's message and continues automatically at the stated reset, instead of waiting for you with no explanation. (#1081) *(@amtmich)*
+- 🐛 Pausing an automation stops the tasks it launched from dispatching subtasks, and Pause first lists its queued and running tasks, with an option to cancel the queued ones (fixes #1980). (#1986) *(@pat-lewczuk)*
+- 🐛 A Continue or message sent while a run is settling is taken instead of failing with a 409. (#1971) *(@pat-lewczuk)*
+- 🐛 A 143 exit caused by the shutdown signal cezar itself received (Ctrl-C, `systemctl stop`, logout) is no longer reported as an agent crash. (#1972) *(@pat-lewczuk)*
+- 🐛 The Settings → Webhooks event stream closes when you leave the page, so repeated visits no longer use up the browser's connections and stall navigation. (#1998) *(@matwiatrzyk, via @pat-lewczuk)*
+- 🐛 A sidebar row's status dot opens the task, so a row whose PR chips fill the column can still be opened (fixes #1975). (#1976) *(@sapersky)*
+- 🐛 Usage limits that name no reset, and models a ChatGPT login cannot use, are no longer reported as agent errors. (#1970) *(@pat-lewczuk)*
+- 🐛 Aborts and errors injected by browser extensions are no longer reported as cockpit crashes. (#1973) *(@pat-lewczuk)*
+
+## 🧪 Testing
+- 🧪 Windows home-safety fixtures pin `USERPROFILE` as well as `HOME`, so a test run cannot replace the real project registry (fixes #1853). (#1876) *(@haxiorz)*
+- 🧪 The test environment proves its identity before it is reused or torn down (fixes #898) (supersedes #900). (#1389) *(@sapersky, via @lbajsarowicz)*
+- 🧪 The Mermaid previews test survives a loaded runner. (#1874) *(@pat-lewczuk)*
+- 🧪 The served-project health fixture includes the webhook capability. (#1723) *(@matwiatrzyk)*
+- 🧪 The browse-root hint and issue ownership row use the type scale, so the design-guardian check passes. (#1873) *(@pat-lewczuk)*
+
+## 🚀 CI/CD & Infrastructure
+- 🚀 The desktop release can sign the Windows installer through SignPath Foundation. It stays off until the SignPath secrets exist. (#1141) *(@patzick)*
+
+## 📝 Specs & Documentation
+- 📝 Specs for the safe singleton cockpit handoff (#1738) *(@pkarw)*, task preview apps (#1878) *(@pkarw)*, a Kiro CLI agent (#1724) *(@dominikpalatynski)* and repository Systems (#1476) *(@dmarczydlo)*.
+- 📝 Specs for the browse-root hint (#1831), automation recent runs (#1833) and list ordering (#1835), Tasks quick and bulk actions (#1842), GitHub issue ownership (#1844) and worktree removal (#1854). *(@haxiorz)*
+- 📝 Specs for the "closed · idle" task state (#1934) *(@kmrosiek)* and project slash commands in `/` autocomplete and the Skills list (#1951) *(@adam-the-hero)*.
+- 📝 ADR 0002: sanitizing first-turn task input and guarding outbound PII (fixes #1156). (#1160) *(@marcinorocz)*
+
+## 👥 Contributors
+
+- @pat-lewczuk
+- @haxiorz
+- @matwiatrzyk
+- @wppoland
+- @matgren
+- @lbajsarowicz
+- @pkarw
+- @aleksanderw1992
+- @Exsilium122
+- @vloneskorpion
+- @righttime
+- @blabbler78
+- @sapersky
+- @wojciechszyjka
+- @kmrosiek
+- @piotrchabros
+- @martaradziszewska
+- @patzick
+- @dominikpalatynski
+- @dmarczydlo
+- @marcinorocz
+- @amtmich
+- @adam-the-hero
+
 # 0.18.0 (2026-10-31)
 
 ## Highlights
